@@ -47,6 +47,7 @@ export default async function SignInPage({ searchParams }: LoginProps) {
             <form className="flex flex-col space-y-4">
               <button
                 formAction={signInWithGoogle}
+                formNoValidate
                 className="w-full h-11 flex items-center justify-center gap-2 rounded-lg bg-white text-black font-medium hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black"
               >
                 <svg className="h-5 w-5" aria-hidden="true" viewBox="0 0 24 24">
