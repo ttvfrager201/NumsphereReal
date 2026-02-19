@@ -4,6 +4,50 @@ import PricingCard from "@/components/pricing-card";
 import Footer from "@/components/footer";
 import { createClient } from "../../supabase/server";
 import { ArrowUpRight, CheckCircle2, Zap, Shield, Users } from 'lucide-react';
+import { StickyScroll } from "@/components/ui/sticky-scroll-reveal";
+
+const content = [
+  {
+    title: "Lightning Fast",
+    description:
+      "10x faster than traditional solutions. We've optimized every aspect of our platform to ensure that you get the speed you need to stay ahead of the competition.",
+    content: (
+      <div className="h-full w-full bg-[linear-gradient(to_bottom_right,var(--cyan-500),var(--emerald-500))] flex items-center justify-center text-white">
+        <Zap className="w-10 h-10" />
+      </div>
+    ),
+  },
+  {
+    title: "Enterprise Security",
+    description:
+      "Bank-grade encryption built-in. Your data is safe with us. We use the latest security standards to protect your information from unauthorized access.",
+    content: (
+      <div className="h-full w-full bg-[linear-gradient(to_bottom_right,var(--pink-500),var(--indigo-500))] flex items-center justify-center text-white">
+        <Shield className="w-10 h-10" />
+      </div>
+    ),
+  },
+  {
+    title: "Team Collaboration",
+    description:
+      "Seamless workflow for your entire team. Work together in real-time with our collaborative tools designed to boost productivity and efficiency.",
+    content: (
+      <div className="h-full w-full bg-[linear-gradient(to_bottom_right,var(--orange-500),var(--yellow-500))] flex items-center justify-center text-white">
+        <Users className="w-10 h-10" />
+      </div>
+    ),
+  },
+  {
+    title: "99.9% Uptime",
+    description:
+      "Reliability you can count on. Our infrastructure is designed to ensure that your services are always available when you need them.",
+    content: (
+      <div className="h-full w-full bg-[linear-gradient(to_bottom_right,var(--cyan-500),var(--blue-500))] flex items-center justify-center text-white">
+        <CheckCircle2 className="w-10 h-10" />
+      </div>
+    ),
+  },
+];
 
 export default async function Home() {
   const supabase = await createClient();
@@ -18,27 +62,13 @@ export default async function Home() {
 
       {/* Features Section */}
       <section className="py-24 bg-black relative overflow-hidden" id="features">
-        <div className="absolute inset-0 bg-gradient-to-b from-black via-zinc-950 to-black pointer-events-none" />
         <div className="container mx-auto px-4 relative z-10">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold mb-6 tracking-tight">Why Choose NumSphere</h2>
             <p className="text-gray-400 max-w-2xl mx-auto text-lg">We're revolutionizing the way teams work with cutting-edge technology and unparalleled service.</p>
           </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {[
-              { icon: <Zap className="w-6 h-6 text-white" />, title: "Lightning Fast", description: "10x faster than traditional solutions" },
-              { icon: <Shield className="w-6 h-6 text-white" />, title: "Enterprise Security", description: "Bank-grade encryption built-in" },
-              { icon: <Users className="w-6 h-6 text-white" />, title: "Team Collaboration", description: "Seamless workflow for your entire team" },
-              { icon: <CheckCircle2 className="w-6 h-6 text-white" />, title: "99.9% Uptime", description: "Reliability you can count on" }
-            ].map((feature, index) => (
-              <div key={index} className="p-6 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-colors">
-                <div className="mb-4 p-3 bg-white/10 rounded-lg w-fit">{feature.icon}</div>
-                <h3 className="text-xl font-semibold mb-2 text-white">{feature.title}</h3>
-                <p className="text-gray-400">{feature.description}</p>
-              </div>
-            ))}
-          </div>
+          
+          <StickyScroll content={content} />
         </div>
       </section>
 

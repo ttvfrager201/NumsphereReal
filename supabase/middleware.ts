@@ -48,7 +48,7 @@ export const updateSession = async (request: NextRequest) => {
     }
 
     if (request.nextUrl.pathname === "/" && !error) {
-      return NextResponse.redirect(new URL("/", request.url));
+      // User is logged in on the home page - that's fine, don't redirect
     }
 
     return response;

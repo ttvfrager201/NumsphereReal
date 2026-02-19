@@ -1,9 +1,10 @@
-import { signInAction, signInWithGoogle } from "@/app/actions";
+import { signInAction, signInWithGoogle, signInWithMagicLinkAction } from "@/app/actions";
 import { FormMessage, Message } from "@/components/form-message";
 import Navbar from "@/components/navbar";
 import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import Link from "next/link";
 
 interface LoginProps {
@@ -101,18 +102,38 @@ export default async function SignInPage({ searchParams }: LoginProps) {
                   type="password"
                   name="password"
                   placeholder="••••••••"
-                  required
+                  required={false}
                   className="bg-zinc-900/50 border-white/10 text-white placeholder:text-gray-500 focus:border-white/20 focus:ring-white/20 h-11"
                 />
               </div>
 
-              <SubmitButton
-                className="w-full h-11 bg-white/10 text-white hover:bg-white/20 font-medium border border-white/10"
-                pendingText="Signing in..."
-                formAction={signInAction}
-              >
-                Sign in with Email
-              </SubmitButton>
+              <div className="flex items-center space-x-2">
+                <Checkbox id="remember" name="remember" className="border-white/20 data-[state=checked]:bg-white data-[state=checked]:text-black" />
+                <Label
+                  htmlFor="remember"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-gray-400"
+                >
+                  Remember me
+                </Label>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <SubmitButton
+                  className="w-full h-11 bg-white text-black hover:bg-gray-200 font-medium border border-transparent transition-colors"
+                  pendingText="Signing in..."
+                  formAction={signInAction}
+                >
+                  Sign in with Password
+                </SubmitButton>
+
+                <SubmitButton
+                  className="w-full h-11 bg-transparent text-white hover:bg-white/10 font-medium border border-white/10 transition-colors"
+                  pendingText="Sending Link..."
+                  formAction={signInWithMagicLinkAction}
+                >
+                  Sign in with Magic Link
+                </SubmitButton>
+              </div>
 
               <FormMessage message={message} />
             </form>

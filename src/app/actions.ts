@@ -4,6 +4,104 @@ import { encodedRedirect } from "@/utils/utils";
 import { redirect } from "next/navigation";
 import { createClient } from "../../supabase/server";
 
+// Helper to get the correct redirect URL for email callbacks
+function getEmailRedirectUrl(): string {
+  // For development, default to localhost:3001
+  if (process.env.NODE_ENV === "development") {
+    // Check if NEXT_PUBLIC_SITE_URL is set
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+    if (siteUrl) {
+      // Ensure it has protocol
+      const url = siteUrl.startsWith("http://") || siteUrl.startsWith("https://") 
+        ? siteUrl 
+        : `http://${siteUrl}`;
+      return `${url}/auth/callback`;
+    }
+    // Default to localhost:3001 for development
+    return "http://localhost:3001/auth/callback";
+  }
+  
+  // For production, use environment variable
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!siteUrl) {
+    throw new Error("NEXT_PUBLIC_SITE_URL must be set in production");
+  }
+  // Ensure it has protocol
+  const url = siteUrl.startsWith("http://") || siteUrl.startsWith("https://") 
+    ? siteUrl 
+    : `https://${siteUrl}`;
+  return `${url}/auth/callback`;
+}
+
+export const signInWithMagicLinkAction = async (formData: FormData) => {
+  const email = formData.get("email")?.toString();
+  const supabase = await createClient();
+
+  if (!email) {
+    return encodedRedirect("error", "/sign-in", "Email is required");
+  }
+
+  // Prevent automatic user creation - only allow sign-in for existing users
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: getEmailRedirectUrl(),
+      shouldCreateUser: false, // Don't create users on sign-in
+    },
+  });
+
+  if (error) {
+    // If user doesn't exist (shouldCreateUser: false), redirect them to sign-up page
+    // Common error messages when user doesn't exist:
+    // - "User not found"
+    // - "signups not allowed" (when signups are disabled for OTP)
+    // - "Email rate limit exceeded" might also indicate user doesn't exist in some cases
+    const errorMessage = error.message.toLowerCase();
+    if (
+      errorMessage.includes("user not found") ||
+      errorMessage.includes("signups not allowed") ||
+      errorMessage.includes("signup not allowed") ||
+      (error.status === 400 && errorMessage.includes("email"))
+    ) {
+      // Redirect to sign-up with error message and pre-filled email
+      return redirect(
+        `/sign-up?error=${encodeURIComponent("No account found with this email. Please sign up to create an account.")}&email=${encodeURIComponent(email)}`
+      );
+    }
+    return encodedRedirect("error", "/sign-in", error.message);
+  }
+
+  return redirect(`/check-email?email=${encodeURIComponent(email)}&type=sign-in`);
+};
+
+export const signUpWithMagicLinkAction = async (formData: FormData) => {
+  const email = formData.get("email")?.toString();
+  const fullName = formData.get("full_name")?.toString() || '';
+  const supabase = await createClient();
+
+  if (!email) {
+    return encodedRedirect("error", "/sign-up", "Email is required");
+  }
+
+  // signInWithOtp automatically creates users if they don't exist (shouldCreateUser defaults to true)
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: getEmailRedirectUrl(),
+      shouldCreateUser: true, // Explicitly enable automatic user creation
+      data: {
+        full_name: fullName,
+      }
+    },
+  });
+
+  if (error) {
+    return encodedRedirect("error", "/sign-up", error.message);
+  }
+
+  return redirect(`/check-email?email=${encodeURIComponent(email)}&type=sign-up`);
+};
+
 export const signUpAction = async (formData: FormData) => {
   const email = formData.get("email")?.toString();
   const password = formData.get("password")?.toString();
@@ -18,10 +116,11 @@ export const signUpAction = async (formData: FormData) => {
     );
   }
 
-  const { data: { user }, error } = await supabase.auth.signUp({
+  const { error } = await supabase.auth.signUp({
     email,
     password,
     options: {
+      emailRedirectTo: getEmailRedirectUrl(),
       data: {
         full_name: fullName,
         email: email,
@@ -33,43 +132,8 @@ export const signUpAction = async (formData: FormData) => {
     return encodedRedirect("error", "/sign-up", error.message);
   }
 
-  if (user) {
-    try {
-
-      const { error: updateError } = await supabase
-        .from('users')
-        .insert({
-          id: user.id,
-          user_id: user.id,
-          name: fullName,
-          email: email,
-          token_identifier: user.id,
-          created_at: new Date().toISOString()
-        });
-
-      if (updateError) {
-        // Error handling without console.error
-        return encodedRedirect(
-          "error",
-          "/sign-up",
-          "Error updating user. Please try again.",
-        );
-      }
-    } catch (err) {
-      // Error handling without console.error
-      return encodedRedirect(
-        "error",
-        "/sign-up",
-        "Error updating user. Please try again.",
-      );
-    }
-  }
-
-  return encodedRedirect(
-    "success",
-    "/sign-up",
-    "Thanks for signing up! Please check your email for a verification link.",
-  );
+  // Don't insert into users table here — it happens in /auth/callback after email is confirmed
+  return redirect(`/check-email?email=${encodeURIComponent(email)}&type=sign-up`);
 };
 
 export const signInAction = async (formData: FormData) => {

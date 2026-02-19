@@ -51,21 +51,31 @@ export default async function Navbar() {
 
         <div className="flex gap-4 items-center">
           {user ? (
-            <UserProfile />
+            <>
+              <UserProfile />
+              <Link
+                href="/dashboard"
+                className="hidden sm:inline-flex h-9 items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 focus:ring-offset-black"
+              >
+                Dashboard
+              </Link>
+            </>
           ) : (
-            <Link
-              href="/sign-in"
-              className="text-sm font-medium text-white hover:text-gray-300 transition-colors"
-            >
-              Log in
-            </Link>
+            <>
+              <Link
+                href="/sign-in"
+                className="text-sm font-medium text-white hover:text-gray-300 transition-colors"
+              >
+                Log in
+              </Link>
+              <Link
+                href="/sign-up"
+                className="hidden sm:inline-flex h-9 items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 focus:ring-offset-black"
+              >
+                Book Consultation
+              </Link>
+            </>
           )}
-          <Link
-            href={user ? "/dashboard" : "/sign-up"}
-            className="hidden sm:inline-flex h-9 items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 focus:ring-offset-black"
-          >
-            {user ? "Dashboard" : "Book Consultation"}
-          </Link>
         </div>
       </div>
     </nav>
