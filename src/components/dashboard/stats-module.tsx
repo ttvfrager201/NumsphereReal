@@ -52,14 +52,14 @@ export function StatsModule({
       className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 col-span-12 lg:col-span-8"
     >
       {stats.map((stat, index) => (
-        <Card key={index} className="p-6 flex flex-col gap-2 hover:shadow-md transition-shadow">
+        <Card key={index} className="p-6 flex flex-col gap-2 hover:shadow-lg transition-shadow bg-white/5 border-white/10 backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-sans">
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider font-sans">
               {stat.label}
             </span>
             <stat.icon className={`w-4 h-4 ${stat.color}`} />
           </div>
-          <div className="text-3xl font-bold font-display tracking-tight text-foreground">
+          <div className="text-3xl font-bold font-display tracking-tight text-white">
             {stat.value}
           </div>
         </Card>
