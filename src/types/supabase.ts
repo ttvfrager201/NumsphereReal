@@ -14,55 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
-      bookings: {
+      business_profiles: {
         Row: {
-          appointment_time: string
+          address: string | null
+          booking_slug: string
+          business_name: string
           created_at: string
-          customer_name: string
+          email: string | null
           id: string
-          missed_call_id: string | null
-          payment_status: string | null
-          service_type: string
-          status: string
+          logo_url: string | null
+          phone_number: string | null
           updated_at: string
           user_id: string | null
         }
         Insert: {
-          appointment_time: string
+          address?: string | null
+          booking_slug: string
+          business_name: string
           created_at?: string
-          customer_name: string
+          email?: string | null
           id?: string
-          missed_call_id?: string | null
-          payment_status?: string | null
-          service_type: string
-          status?: string
+          logo_url?: string | null
+          phone_number?: string | null
           updated_at?: string
           user_id?: string | null
         }
         Update: {
-          appointment_time?: string
+          address?: string | null
+          booking_slug?: string
+          business_name?: string
           created_at?: string
-          customer_name?: string
+          email?: string | null
           id?: string
-          missed_call_id?: string | null
-          payment_status?: string | null
-          service_type?: string
-          status?: string
+          logo_url?: string | null
+          phone_number?: string | null
           updated_at?: string
           user_id?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "bookings_missed_call_id_fkey"
-            columns: ["missed_call_id"]
-            isOneToOne: false
-            referencedRelation: "missed_calls"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "bookings_user_id_fkey"
+            foreignKeyName: "business_profiles_user_id_fkey"
             columns: ["user_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "users"
             referencedColumns: ["user_id"]
           },

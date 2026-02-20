@@ -1,6 +1,7 @@
 "use client";
 
 import { SettingsDrawer } from "./settings-drawer";
+import { BookingLinkSetup } from "./booking-link-setup";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Settings, MessageSquare, Link2, LayoutDashboard, LogOut, Home, PanelLeftClose, PanelLeft, UserCircle } from "lucide-react";
@@ -302,9 +303,7 @@ export function DashboardClient({ missedCalls, bookings, settings, stats }: Dash
             <div className="space-y-6">
               <h1 className="text-2xl font-bold tracking-tight text-white">Booking Link</h1>
               <p className="text-gray-400">Booking link with optional Stripe Express payment.</p>
-              <div className="min-h-[400px] rounded-xl border border-white/10 bg-white/5 p-8 flex items-center justify-center">
-                <p className="text-gray-500 uppercase tracking-wider text-sm">Empty</p>
-              </div>
+              <BookingLinkSetup />
             </div>
           )}
 
