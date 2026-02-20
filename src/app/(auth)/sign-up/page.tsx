@@ -1,4 +1,4 @@
-import { signUpAction } from "@/app/actions";
+import { signUpAction, signInWithGoogle } from "@/app/actions";
 import { FormMessage, Message } from "@/components/form-message";
 import Navbar from "@/components/navbar";
 import { SubmitButton } from "@/components/submit-button";
@@ -45,6 +45,32 @@ export default async function Signup(props: {
                   Sign in
                 </Link>
               </p>
+            </div>
+
+            <form action={signInWithGoogle}>
+              <button
+                type="submit"
+                className="w-full h-11 flex items-center justify-center gap-2 rounded-lg bg-white text-black font-medium hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black"
+              >
+                <svg className="h-5 w-5" aria-hidden="true" viewBox="0 0 24 24">
+                  <path
+                    d="M12.0003 20.45c4.6667 0 8.0416-3.2916 8.0416-8.2083 0-.75-.0833-1.4583-.2083-2.125h-7.8333v4.0416h4.5c-.2083 1.25-1.25 3.375-4.5 3.375-2.7083 0-4.9166-2.25-4.9166-5.0416s2.2083-5.0417 4.9166-5.0417c1.4167 0 2.7084.5 3.6667 1.4167l2.9583-2.9584c-1.8333-1.7083-4.2916-2.7083-6.625-2.7083-5.5 0-10 4.5-10 10s4.5 10 10 10z"
+                    fill="currentColor"
+                  />
+                </svg>
+                Sign up with Google
+              </button>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-white/10" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-black/50 px-2 text-gray-500 backdrop-blur-sm">
+                  Or continue with email
+                </span>
+              </div>
             </div>
 
             <form className="flex flex-col space-y-4">

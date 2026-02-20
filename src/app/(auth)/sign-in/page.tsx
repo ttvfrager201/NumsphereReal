@@ -45,10 +45,9 @@ export default async function SignInPage({ searchParams }: LoginProps) {
               </p>
             </div>
 
-            <form className="flex flex-col space-y-4">
+            <form action={signInWithGoogle}>
               <button
-                formAction={signInWithGoogle}
-                formNoValidate
+                type="submit"
                 className="w-full h-11 flex items-center justify-center gap-2 rounded-lg bg-white text-black font-medium hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-black"
               >
                 <svg className="h-5 w-5" aria-hidden="true" viewBox="0 0 24 24">
@@ -59,18 +58,20 @@ export default async function SignInPage({ searchParams }: LoginProps) {
                 </svg>
                 Sign in with Google
               </button>
+            </form>
 
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-white/10" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-black/50 px-2 text-gray-500 backdrop-blur-sm">
-                    Or continue with email
-                  </span>
-                </div>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-white/10" />
               </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-black/50 px-2 text-gray-500 backdrop-blur-sm">
+                  Or continue with email
+                </span>
+              </div>
+            </div>
 
+            <form className="flex flex-col space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-sm font-medium text-gray-300">
                   Email
@@ -102,7 +103,7 @@ export default async function SignInPage({ searchParams }: LoginProps) {
                   type="password"
                   name="password"
                   placeholder="••••••••"
-                  required={false}
+                  required
                   className="bg-zinc-900/50 border-white/10 text-white placeholder:text-gray-500 focus:border-white/20 focus:ring-white/20 h-11"
                 />
               </div>

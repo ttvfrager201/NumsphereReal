@@ -84,11 +84,27 @@ export async function GET(request: Request) {
     return NextResponse.redirect(getRedirectUrl(checkEmailUrl));
   };
 
-  // Handle PKCE code exchange (OAuth, magic link via PKCE)
+  // Handle PKCE code exchange (OAuth like Google, or magic link via PKCE)
   if (code) {
     const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { error, data } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      // Ensure user profile exists in public.users table
+      await ensureUserProfile(supabase);
+      
+      // Check if this is an OAuth sign-in by examining the provider in app_metadata
+      // or by checking if there are any provider identities (Google, GitHub, etc.)
+      const { data: { user } } = await supabase.auth.getUser();
+      const hasOAuthIdentity = user?.identities?.some(
+        identity => identity.provider !== 'email'
+      );
+      
+      if (hasOAuthIdentity) {
+        // OAuth sign-in (Google, GitHub, etc.) — go straight to dashboard
+        return NextResponse.redirect(getRedirectUrl(next));
+      }
+      
+      // Email-based PKCE flow (magic link) — show check-email confirmation
       return redirectToCheckEmail(supabase);
     }
   }
@@ -101,7 +117,13 @@ export async function GET(request: Request) {
       type: type as any,
     });
     if (!error) {
-      return redirectToCheckEmail(supabase);
+      // For email confirmation/signup, show the check-email success page
+      // For other types, redirect to dashboard
+      if (type === "signup" || type === "email") {
+        return redirectToCheckEmail(supabase);
+      }
+      await ensureUserProfile(supabase);
+      return NextResponse.redirect(getRedirectUrl(next));
     }
   }
 
@@ -111,7 +133,8 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      return redirectToCheckEmail(supabase);
+      await ensureUserProfile(supabase);
+      return NextResponse.redirect(getRedirectUrl(next));
     }
   } catch (e) {
     // Fall through to error
