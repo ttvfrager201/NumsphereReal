@@ -16,38 +16,47 @@ export type Database = {
     Tables: {
       business_profiles: {
         Row: {
+          accent_color: string | null
           address: string | null
           booking_slug: string
           business_name: string
           created_at: string
+          dark_mode: boolean | null
           email: string | null
           id: string
           logo_url: string | null
           phone_number: string | null
+          theme_color: string | null
           updated_at: string
           user_id: string | null
         }
         Insert: {
+          accent_color?: string | null
           address?: string | null
           booking_slug: string
           business_name: string
           created_at?: string
+          dark_mode?: boolean | null
           email?: string | null
           id?: string
           logo_url?: string | null
           phone_number?: string | null
+          theme_color?: string | null
           updated_at?: string
           user_id?: string | null
         }
         Update: {
+          accent_color?: string | null
           address?: string | null
           booking_slug?: string
           business_name?: string
           created_at?: string
+          dark_mode?: boolean | null
           email?: string | null
           id?: string
           logo_url?: string | null
           phone_number?: string | null
+          theme_color?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -55,7 +64,7 @@ export type Database = {
           {
             foreignKeyName: "business_profiles_user_id_fkey"
             columns: ["user_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["user_id"]
           },
