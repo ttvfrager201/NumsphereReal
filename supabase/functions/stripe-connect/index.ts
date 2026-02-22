@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     if (action === "create-connect-account") {
       const { business_profile_id, user_id, return_url } = params;
 
-      // Check if the business profile already has a Stripe account
+      // Check the current profile
       const { data: profile } = await supabaseClient
         .from("business_profiles")
         .select("stripe_account_id, business_name, email")
@@ -57,15 +57,15 @@ Deno.serve(async (req) => {
         });
 
         accountId = account.id;
-
-        // Save the Stripe account ID
-        await supabaseClient
-          .from("business_profiles")
-          .update({ stripe_account_id: accountId })
-          .eq("id", business_profile_id);
       }
 
-      // Create an account link for onboarding
+      // Save the Stripe account ID to THIS profile
+      await supabaseClient
+        .from("business_profiles")
+        .update({ stripe_account_id: accountId })
+        .eq("id", business_profile_id);
+
+      // Create an account link for onboarding (or re-onboarding)
       const accountLink = await stripe.accountLinks.create({
         account: accountId,
         refresh_url: `${return_url}?stripe_refresh=true`,
@@ -82,20 +82,65 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Action: check-account-status
-    if (action === "check-account-status") {
-      const { stripe_account_id } = params;
+    // Action: create-payment-intent (for Payment Elements)
+    if (action === "create-payment-intent") {
+      const {
+        business_profile_id,
+        service_name,
+        price_cents,
+        customer_email,
+        booking_id,
+      } = params;
 
-      const account = await stripe.accounts.retrieve(stripe_account_id);
-      const isEnabled =
-        account.charges_enabled && account.payouts_enabled;
+      // Get the business profile's Stripe account
+      const { data: profile } = await supabaseClient
+        .from("business_profiles")
+        .select("stripe_account_id, business_name")
+        .eq("id", business_profile_id)
+        .single();
+
+      if (!profile?.stripe_account_id) {
+        return new Response(
+          JSON.stringify({ error: "Stripe not connected for this business" }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 400,
+          }
+        );
+      }
+
+      const applicationFee = Math.round(price_cents * 0.05);
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: price_cents,
+        currency: "usd",
+        description: `Booking: ${service_name} at ${profile.business_name}`,
+        receipt_email: customer_email || undefined,
+        application_fee_amount: applicationFee,
+        transfer_data: {
+          destination: profile.stripe_account_id,
+        },
+        metadata: {
+          booking_id,
+          business_profile_id,
+        },
+      });
+
+      // Update booking with payment intent ID
+      if (booking_id) {
+        await supabaseClient
+          .from("bookings")
+          .update({
+            stripe_payment_intent_id: paymentIntent.id,
+            payment_status: "pending",
+          })
+          .eq("id", booking_id);
+      }
 
       return new Response(
         JSON.stringify({
-          charges_enabled: account.charges_enabled,
-          payouts_enabled: account.payouts_enabled,
-          details_submitted: account.details_submitted,
-          is_enabled: isEnabled,
+          client_secret: paymentIntent.client_secret,
+          id: paymentIntent.id
         }),
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -104,7 +149,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Action: create-checkout-session (for customer payment on booking)
+    // Action: create-checkout-session (Legacy/Fallback)
     if (action === "create-checkout-session") {
       const {
         business_profile_id,
@@ -196,7 +241,7 @@ Deno.serve(async (req) => {
       const { session_id } = params;
 
       const session = await stripe.checkout.sessions.retrieve(session_id);
-      
+
       if (session.payment_status === "paid") {
         // Update the booking
         const bookingId = session.metadata?.booking_id;

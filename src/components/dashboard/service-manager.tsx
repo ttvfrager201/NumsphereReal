@@ -150,6 +150,22 @@ export function ServiceManager({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      // Check if user already has a Stripe account on any profile
+      const { data: existingProfiles } = await supabase
+        .from("business_profiles")
+        .select("stripe_account_id")
+        .eq("user_id", user.id)
+        .not("stripe_account_id", "is", null)
+        .limit(1);
+
+      if (existingProfiles && existingProfiles.length > 0 && existingProfiles[0].stripe_account_id) {
+        // Reuse existing Stripe account
+        await updateBusinessProfileStripe(businessProfileId, existingProfiles[0].stripe_account_id, true);
+        toast.success("Stripe account linked to this booking page!");
+        window.location.reload();
+        return;
+      }
+
       const { data, error } = await supabase.functions.invoke(
         "supabase-functions-stripe-connect",
         {
@@ -291,7 +307,7 @@ export function ServiceManager({
         {!stripeAccountId ? (
           <div className="space-y-3">
             <p className="text-xs text-gray-400">
-              Connect Stripe Express to accept payments through your booking page. Customers will pay when they book.
+              Connect Stripe Express to accept payments through your booking page. Your account is shared across all booking links.
             </p>
             <Button
               onClick={handleConnectStripe}

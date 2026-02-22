@@ -9,7 +9,6 @@ import {
   Settings,
   MessageSquare,
   Link2,
-  LayoutDashboard,
   LogOut,
   Home,
   PanelLeftClose,
@@ -56,13 +55,13 @@ interface BookingItem {
   created_at: string;
 }
 
-type NavItem = "home" | "missed-calls" | "booking-link" | "dashboard";
+type NavItem = "home" | "missed-calls" | "booking-link" | "revenue";
 
 const NAV_ITEMS: { id: NavItem; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "Home", icon: Home },
   { id: "missed-calls", label: "Missed Call Text-Back", icon: MessageSquare },
-  { id: "booking-link", label: "Booking Link (Stripe Express)", icon: Link2 },
-  { id: "dashboard", label: "Basic Dashboard", icon: LayoutDashboard },
+  { id: "booking-link", label: "Booking Link", icon: Link2 },
+  { id: "revenue", label: "Total Revenue", icon: DollarSign },
 ];
 
 export function DashboardClient({
@@ -127,7 +126,21 @@ export function DashboardClient({
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-
+  // Handle Stripe success redirect — auto-navigate to booking-link tab
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("stripe_success") === "true") {
+        setActiveNav("booking-link");
+        // Clean up URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete("stripe_success");
+        url.searchParams.delete("profile_id");
+        window.history.replaceState({}, "", url.toString());
+        toast.success("Stripe connected successfully!");
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const channel = supabase
@@ -468,6 +481,11 @@ export function DashboardClient({
                                   Pending
                                 </span>
                               )}
+                              {booking.payment_status === "pay_in_store" && (
+                                <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
+                                  Pay In Store
+                                </span>
+                              )}
                               <span
                                 className={cn(
                                   "text-[10px] px-2 py-0.5 rounded-full border",
@@ -571,10 +589,10 @@ export function DashboardClient({
                       Booking Link
                     </button>
                     <button
-                      onClick={() => setActiveNav("dashboard")}
+                      onClick={() => setActiveNav("revenue")}
                       className="block w-full text-left px-4 py-3 rounded-lg text-gray-400 hover:bg-white/5 hover:text-white transition-colors"
                     >
-                      Basic Dashboard
+                      Total Revenue
                     </button>
                   </div>
                 </div>
@@ -615,114 +633,142 @@ export function DashboardClient({
             </div>
           )}
 
-          {activeNav === "dashboard" && (
+          {activeNav === "revenue" && (
             <div className="space-y-6">
-              <h1 className="text-2xl font-bold tracking-tight text-white">
-                Basic Dashboard
-              </h1>
-              <p className="text-gray-400">Calls + appointments overview.</p>
-              <div className="grid gap-6 sm:grid-cols-2">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                  <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    All Bookings
-                  </h3>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                    {liveBookings.length === 0 ? (
-                      <p className="text-gray-500 text-sm text-center py-8">
-                        No bookings yet
-                      </p>
-                    ) : (
-                      liveBookings
-                        .sort(
-                          (a, b) =>
-                            new Date(a.appointment_time).getTime() -
-                            new Date(b.appointment_time).getTime()
-                        )
-                        .map((booking) => {
-                          const apptTime = new Date(booking.appointment_time);
-                          return (
-                            <div
-                              key={booking.id}
-                              className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
-                            >
-                              <div
-                                className={cn(
-                                  "w-1 h-10 rounded-full shrink-0",
-                                  booking.status === "completed"
-                                    ? "bg-green-500"
-                                    : booking.status === "confirmed"
-                                      ? "bg-teal-500"
-                                      : booking.status === "cancelled"
-                                        ? "bg-red-500"
-                                        : "bg-gray-500"
-                                )}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white font-medium truncate">
-                                  {booking.customer_name}
-                                </p>
-                                <p className="text-xs text-gray-500 font-mono">
-                                  {format(apptTime, "MMM d, h:mm a")}
-                                </p>
-                              </div>
-                              <span
-                                className={cn(
-                                  "text-[10px] px-2 py-0.5 rounded-full border shrink-0",
-                                  booking.status === "confirmed"
-                                    ? "bg-teal-500/20 text-teal-400 border-teal-500/30"
-                                    : booking.status === "completed"
-                                      ? "bg-green-500/20 text-green-400 border-green-500/30"
-                                      : booking.status === "cancelled"
-                                        ? "bg-red-500/20 text-red-400 border-red-500/30"
-                                        : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-                                )}
-                              >
-                                {booking.status}
-                              </span>
-                            </div>
-                          );
-                        })
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                  <h3 className="text-sm font-semibold text-white mb-4">
-                    Recent Activity
-                  </h3>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                    {liveBookings
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-white">
+                  Total Revenue
+                </h1>
+                <p className="text-gray-400">
+                  Track your earnings, payouts, and payment history.
+                </p>
+              </div>
+
+              {/* Revenue Module - Full Width */}
+              <RevenueModule totalRevenue={stats.revenueCaptured} />
+
+              {/* Paid Bookings */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-green-400" />
+                  Payment History
+                </h3>
+                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                  {(() => {
+                    const paidBookings = liveBookings
+                      .filter(
+                        (b) =>
+                          b.payment_status === "paid" ||
+                          b.payment_status === "pending"
+                      )
                       .sort(
                         (a, b) =>
                           new Date(b.created_at).getTime() -
                           new Date(a.created_at).getTime()
-                      )
-                      .slice(0, 10)
-                      .map((booking) => (
-                        <div
-                          key={booking.id}
-                          className="p-3 rounded-lg border border-white/5"
-                        >
-                          <p className="text-sm text-white">
-                            <span className="font-medium">
-                              {booking.customer_name}
-                            </span>{" "}
-                            booked an appointment
+                      );
+
+                    if (paidBookings.length === 0) {
+                      return (
+                        <div className="text-center py-10">
+                          <DollarSign className="w-10 h-10 mx-auto mb-3 text-gray-600" />
+                          <p className="text-gray-500 text-sm">
+                            No paid bookings yet
                           </p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {format(
-                              new Date(booking.created_at),
-                              "MMM d, h:mm a"
-                            )}
+                          <p className="text-gray-600 text-xs mt-1">
+                            Enable payments on your booking links to start
+                            earning
                           </p>
                         </div>
-                      ))}
-                    {liveBookings.length === 0 && (
-                      <p className="text-gray-500 text-sm text-center py-8">
-                        No activity yet
-                      </p>
-                    )}
-                  </div>
+                      );
+                    }
+
+                    return paidBookings.map((booking) => {
+                      const apptTime = new Date(booking.appointment_time);
+                      return (
+                        <div
+                          key={booking.id}
+                          className="flex items-center gap-3 p-4 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
+                        >
+                          <div
+                            className={cn(
+                              "w-1 h-12 rounded-full shrink-0",
+                              booking.payment_status === "paid"
+                                ? "bg-green-500"
+                                : "bg-amber-500"
+                            )}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-white font-medium truncate">
+                              {booking.customer_name}
+                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-xs text-gray-500 font-mono">
+                                {format(apptTime, "MMM d, h:mm a")}
+                              </span>
+                              <span className="text-xs text-gray-600">
+                                {booking.service_type}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span
+                              className={cn(
+                                "text-[10px] px-2 py-0.5 rounded-full border",
+                                booking.payment_status === "paid"
+                                  ? "bg-green-500/20 text-green-400 border-green-500/30"
+                                  : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                              )}
+                            >
+                              {booking.payment_status === "paid"
+                                ? "Paid"
+                                : "Pending"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* All Bookings Revenue Summary */}
+              <div className="grid gap-6 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
+                    Total Paid Bookings
+                  </p>
+                  <p className="text-3xl font-bold text-white">
+                    {
+                      liveBookings.filter((b) => b.payment_status === "paid")
+                        .length
+                    }
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
+                    Pending Payments
+                  </p>
+                  <p className="text-3xl font-bold text-amber-400">
+                    {
+                      liveBookings.filter(
+                        (b) => b.payment_status === "pending"
+                      ).length
+                    }
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
+                    Free Bookings
+                  </p>
+                  <p className="text-3xl font-bold text-gray-400">
+                    {
+                      liveBookings.filter(
+                        (b) =>
+                          !b.payment_status ||
+                          b.payment_status === "not_required"
+                      ).length
+                    }
+                  </p>
                 </div>
               </div>
             </div>

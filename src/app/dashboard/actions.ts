@@ -364,3 +364,48 @@ export async function updateAvailableHours(profileId: string, availableHours: an
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard");
 }
+
+export async function syncStripeAcrossProfiles() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data: profileWithStripe } = await supabase
+    .from("business_profiles")
+    .select("stripe_account_id")
+    .eq("user_id", user.id)
+    .not("stripe_account_id", "is", null)
+    .limit(1)
+    .single();
+
+  if (!profileWithStripe?.stripe_account_id) return null;
+
+  await supabase
+    .from("business_profiles")
+    .update({
+      stripe_account_id: profileWithStripe.stripe_account_id,
+      payments_enabled: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", user.id)
+    .is("stripe_account_id", null);
+
+  revalidatePath("/dashboard");
+  return profileWithStripe.stripe_account_id;
+}
+
+export async function getUserStripeAccountId(): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from("business_profiles")
+    .select("stripe_account_id")
+    .eq("user_id", user.id)
+    .not("stripe_account_id", "is", null)
+    .limit(1)
+    .maybeSingle();
+
+  return data?.stripe_account_id || null;
+}

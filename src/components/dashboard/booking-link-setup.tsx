@@ -28,6 +28,12 @@ import {
   Edit,
   Trash2,
   Plus,
+  CreditCard,
+  Zap,
+  DollarSign,
+  Scissors,
+  Clock,
+  Store,
 } from "lucide-react";
 import {
   saveBusinessProfile,
@@ -35,11 +41,16 @@ import {
   getAllBusinessProfiles,
   uploadBusinessLogo,
   deleteBusinessProfileById,
+  getServicesForProfile,
+  saveService,
+  deleteService,
+  updateBusinessProfileStripe,
 } from "@/app/dashboard/actions";
 import { toast } from "sonner";
 import { BookingLinksList } from "./booking-links-list";
+import { createClient } from "../../../supabase/client";
 
-type SetupStep = "list" | "ready" | "photo" | "details" | "theme" | "preview";
+type SetupStep = "list" | "ready" | "photo" | "details" | "theme" | "payment" | "preview";
 
 const STEPS: SetupStep[] = [
   "list",
@@ -47,6 +58,7 @@ const STEPS: SetupStep[] = [
   "photo",
   "details",
   "theme",
+  "payment",
   "preview",
 ];
 
@@ -61,6 +73,20 @@ interface BusinessFormData {
   theme_color: string;
   accent_color: string;
   dark_mode: boolean;
+  payments_enabled: boolean;
+  stripe_account_id?: string | null;
+}
+
+interface ServiceItem {
+  id?: string;
+  business_profile_id: string;
+  name: string;
+  description: string;
+  duration_minutes: number;
+  price: number;
+  is_paid: boolean;
+  is_active: boolean;
+  payment_mode: "online" | "in_store" | "free";
 }
 
 const THEME_PRESETS = [
@@ -108,6 +134,16 @@ export function BookingLinkSetup() {
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const supabase = createClient();
+
+  // Payment step state
+  const [wantsPayments, setWantsPayments] = useState(false);
+  const [connectingStripe, setConnectingStripe] = useState(false);
+  const [stripeConnected, setStripeConnected] = useState(false);
+  const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
+  const [services, setServices] = useState<ServiceItem[]>([]);
+  const [editingService, setEditingService] = useState<ServiceItem | null>(null);
+  const [savingService, setSavingService] = useState(false);
 
   const [formData, setFormData] = useState<BusinessFormData>({
     business_name: "",
@@ -119,6 +155,8 @@ export function BookingLinkSetup() {
     theme_color: "#000000",
     accent_color: "#ffffff",
     dark_mode: true,
+    payments_enabled: false,
+    stripe_account_id: null,
   });
 
   useEffect(() => {
@@ -127,6 +165,12 @@ export function BookingLinkSetup() {
         const profiles = await getAllBusinessProfiles();
         if (profiles && profiles.length > 0) {
           setStep("list");
+          // Check if user already has a Stripe account on any profile
+          const withStripe = profiles.find((p: any) => p.stripe_account_id);
+          if (withStripe) {
+            setStripeAccountId(withStripe.stripe_account_id);
+            setStripeConnected(true);
+          }
         } else {
           setStep("ready");
         }
@@ -188,7 +232,7 @@ export function BookingLinkSetup() {
     setStep(nextStep);
   };
 
-  const handleEditProfile = (profile: any) => {
+  const handleEditProfile = async (profile: any) => {
     setExistingProfile(profile);
     setFormData({
       id: profile.id,
@@ -201,8 +245,25 @@ export function BookingLinkSetup() {
       theme_color: profile.theme_color || "#000000",
       accent_color: profile.accent_color || "#ffffff",
       dark_mode: profile.dark_mode ?? true,
+      payments_enabled: profile.payments_enabled || false,
+      stripe_account_id: profile.stripe_account_id || null,
     });
     if (profile.logo_url) setPreviewImage(profile.logo_url);
+    if (profile.stripe_account_id) {
+      setStripeAccountId(profile.stripe_account_id);
+      setStripeConnected(true);
+      setWantsPayments(true);
+    }
+    // Load services for this profile
+    try {
+      const svcData = await getServicesForProfile(profile.id);
+      setServices(svcData.map((s: any) => ({
+        ...s,
+        payment_mode: s.is_paid && Number(s.price) > 0 ? "online" : "free",
+      })));
+    } catch {
+      setServices([]);
+    }
     setSlugAvailable(true);
     goToStep("photo");
   };
@@ -219,9 +280,14 @@ export function BookingLinkSetup() {
       theme_color: "#000000",
       accent_color: "#ffffff",
       dark_mode: true,
+      payments_enabled: false,
+      stripe_account_id: null,
     });
     setPreviewImage(null);
     setSlugAvailable(null);
+    setWantsPayments(stripeConnected);
+    setServices([]);
+    setEditingService(null);
     goToStep("ready");
   };
 
@@ -277,6 +343,7 @@ export function BookingLinkSetup() {
         theme_color: formData.theme_color,
         accent_color: formData.accent_color,
         dark_mode: formData.dark_mode,
+        payments_enabled: wantsPayments && stripeConnected,
       });
       toast.success(
         formData.id
@@ -332,7 +399,7 @@ export function BookingLinkSetup() {
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              {["Photo", "Details", "Theme", "Preview"].map((label, idx) => {
+              {["Photo", "Details", "Theme", "Payment", "Preview"].map((label, idx) => {
                 const isActive = currentFormStep >= idx + 2;
                 const isCurrent = currentFormStep === idx + 2;
                 return (
@@ -1088,6 +1155,633 @@ export function BookingLinkSetup() {
                 <ArrowLeft className="w-4 h-4" /> Back
               </Button>
               <Button
+                onClick={() => goToStep("payment")}
+                className="h-11 px-8 rounded-full bg-white text-black font-medium hover:bg-gray-200 transition-all active:scale-[0.98]"
+              >
+                Next: Payment Setup
+                <ArrowRight className="ml-2 w-4 h-4" />
+              </Button>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* STEP 5: Payment Setup */}
+        {step === "payment" && (
+          <motion.div
+            key="payment"
+            custom={direction}
+            variants={slideVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            className="rounded-xl border border-white/10 bg-white/5 p-8"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="mb-6"
+            >
+              <h2 className="text-2xl font-bold text-white tracking-tight mb-2">
+                Accept Payments
+              </h2>
+              <p className="text-gray-400 text-sm">
+                Choose whether you want to accept payments through your booking page.
+              </p>
+            </motion.div>
+
+            {/* Toggle: Want to accept payments? */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between p-5 rounded-xl border border-white/10 bg-white/5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#635BFF]/20 flex items-center justify-center">
+                    <CreditCard className="w-5 h-5 text-[#635BFF]" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-white font-medium">
+                      Accept Online Payments
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Let customers pay when they book via Stripe
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setWantsPayments(!wantsPayments)}
+                  className={`relative w-12 h-7 rounded-full transition-colors ${
+                    wantsPayments ? "bg-[#635BFF]/40" : "bg-white/10"
+                  }`}
+                >
+                  <motion.div
+                    animate={{ x: wantsPayments ? 22 : 2 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 500,
+                      damping: 30,
+                    }}
+                    className={`absolute top-1 w-5 h-5 rounded-full shadow-md ${
+                      wantsPayments ? "bg-[#635BFF]" : "bg-gray-500"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {wantsPayments && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="overflow-hidden space-y-6"
+                  >
+                    {/* Stripe Connect Section */}
+                    {!stripeConnected ? (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-5 space-y-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Zap className="w-4 h-4 text-[#635BFF]" />
+                          <h3 className="text-sm font-semibold text-white">
+                            Connect Stripe Express
+                          </h3>
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          Connect your Stripe account to start accepting payments.
+                          This account will be shared across all your booking links.
+                        </p>
+                        <Button
+                          onClick={async () => {
+                            setConnectingStripe(true);
+                            try {
+                              const { data: { user } } = await supabase.auth.getUser();
+                              if (!user) throw new Error("Not authenticated");
+
+                              // Save profile first if new
+                              let profileId = formData.id;
+                              if (!profileId) {
+                                await saveBusinessProfile({
+                                  business_name: formData.business_name,
+                                  address: formData.address || undefined,
+                                  phone_number: formData.phone_number || undefined,
+                                  email: formData.email || undefined,
+                                  logo_url: formData.logo_url || undefined,
+                                  booking_slug: formData.booking_slug,
+                                  theme_color: formData.theme_color,
+                                  accent_color: formData.accent_color,
+                                  dark_mode: formData.dark_mode,
+                                });
+                                const profiles = await getAllBusinessProfiles();
+                                const found = profiles.find(
+                                  (p: any) => p.booking_slug === formData.booking_slug
+                                );
+                                if (found) {
+                                  profileId = found.id;
+                                  setFormData((prev) => ({ ...prev, id: found.id }));
+                                  setExistingProfile(found);
+                                }
+                              }
+
+                              if (!profileId) throw new Error("Failed to create profile");
+
+                              const SITE_URL_LOCAL =
+                                process.env.NEXT_PUBLIC_SITE_URL ||
+                                "https://8635323e-47c7-41fe-b02a-927e6f46c4fc.canvases.tempo.build";
+
+                              const { data, error } = await supabase.functions.invoke(
+                                "supabase-functions-stripe-connect",
+                                {
+                                  body: {
+                                    action: "create-connect-account",
+                                    business_profile_id: profileId,
+                                    user_id: user.id,
+                                    return_url: `${SITE_URL_LOCAL}/dashboard`,
+                                  },
+                                }
+                              );
+
+                              if (error || !data?.url) throw new Error("Failed to create Stripe account");
+                              window.location.href = data.url;
+                            } catch (error: any) {
+                              toast.error(error.message || "Failed to connect Stripe");
+                            } finally {
+                              setConnectingStripe(false);
+                            }
+                          }}
+                          disabled={connectingStripe || !formData.business_name || !formData.booking_slug}
+                          className="w-full h-11 rounded-lg bg-[#635BFF] hover:bg-[#5349E0] text-white text-sm font-medium"
+                        >
+                          {connectingStripe ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Zap className="w-4 h-4 mr-2" />
+                          )}
+                          Connect with Stripe
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-5">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+                            <Check className="w-5 h-5 text-green-400" />
+                          </div>
+                          <div>
+                            <p className="text-sm text-green-400 font-medium">
+                              Stripe Connected
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              Your Stripe account is shared across all booking links
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Products / Services Section */}
+                    {stripeConnected && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-5 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Scissors className="w-4 h-4 text-gray-400" />
+                            <h3 className="text-sm font-semibold text-white">
+                              Your Products / Services
+                            </h3>
+                            <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">
+                              {services.length}
+                            </span>
+                          </div>
+                          {!editingService && (
+                            <Button
+                              variant="ghost"
+                              onClick={() =>
+                                setEditingService({
+                                  business_profile_id: formData.id || "",
+                                  name: "",
+                                  description: "",
+                                  duration_minutes: 30,
+                                  price: 0,
+                                  is_paid: false,
+                                  is_active: true,
+                                  payment_mode: "free",
+                                })
+                              }
+                              className="text-gray-400 hover:text-white hover:bg-white/5 gap-1.5 text-xs h-8"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add Product
+                            </Button>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-gray-500">
+                          Add your services and choose how customers pay — online when booking, or in-store.
+                        </p>
+
+                        {/* Edit Form */}
+                        <AnimatePresence>
+                          {editingService && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="col-span-2">
+                                    <Label className="text-gray-400 text-xs mb-1">Service Name</Label>
+                                    <Input
+                                      value={editingService.name}
+                                      onChange={(e) =>
+                                        setEditingService({ ...editingService, name: e.target.value })
+                                      }
+                                      placeholder="e.g. Haircut, Beard Trim"
+                                      className="bg-white/5 border-white/10 text-white text-sm h-9"
+                                    />
+                                  </div>
+                                  <div className="col-span-2">
+                                    <Label className="text-gray-400 text-xs mb-1">
+                                      Description (optional)
+                                    </Label>
+                                    <Input
+                                      value={editingService.description}
+                                      onChange={(e) =>
+                                        setEditingService({
+                                          ...editingService,
+                                          description: e.target.value,
+                                        })
+                                      }
+                                      placeholder="Brief description"
+                                      className="bg-white/5 border-white/10 text-white text-sm h-9"
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label className="text-gray-400 text-xs mb-1">
+                                      Duration (minutes)
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      value={editingService.duration_minutes}
+                                      onChange={(e) =>
+                                        setEditingService({
+                                          ...editingService,
+                                          duration_minutes: parseInt(e.target.value) || 30,
+                                        })
+                                      }
+                                      className="bg-white/5 border-white/10 text-white text-sm h-9"
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label className="text-gray-400 text-xs mb-1">
+                                      Price ($)
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      value={editingService.price}
+                                      onChange={(e) =>
+                                        setEditingService({
+                                          ...editingService,
+                                          price: parseFloat(e.target.value) || 0,
+                                        })
+                                      }
+                                      disabled={editingService.payment_mode === "free"}
+                                      className="bg-white/5 border-white/10 text-white text-sm h-9 disabled:opacity-40"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Mode Selection */}
+                                <div className="space-y-2">
+                                  <Label className="text-gray-400 text-xs">Payment Method</Label>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                      {
+                                        mode: "free" as const,
+                                        label: "Free",
+                                        desc: "No payment",
+                                        icon: Scissors,
+                                      },
+                                      {
+                                        mode: "online" as const,
+                                        label: "Pay Online",
+                                        desc: "Pay when booking",
+                                        icon: CreditCard,
+                                      },
+                                      {
+                                        mode: "in_store" as const,
+                                        label: "Pay In Store",
+                                        desc: "Pay at location",
+                                        icon: Store,
+                                      },
+                                    ].map((option) => {
+                                      const isSelected =
+                                        editingService.payment_mode === option.mode;
+                                      return (
+                                        <button
+                                          key={option.mode}
+                                          onClick={() =>
+                                            setEditingService({
+                                              ...editingService,
+                                              payment_mode: option.mode,
+                                              is_paid: option.mode !== "free",
+                                              price:
+                                                option.mode === "free"
+                                                  ? 0
+                                                  : editingService.price,
+                                            })
+                                          }
+                                          className={`relative rounded-xl p-3 border transition-all text-center ${
+                                            isSelected
+                                              ? "border-white/40 bg-white/10 ring-1 ring-white/20"
+                                              : "border-white/10 bg-white/5 hover:border-white/20"
+                                          }`}
+                                        >
+                                          <option.icon
+                                            className={`w-4 h-4 mx-auto mb-1 ${
+                                              isSelected ? "text-white" : "text-gray-500"
+                                            }`}
+                                          />
+                                          <span
+                                            className={`text-xs font-medium block ${
+                                              isSelected ? "text-white" : "text-gray-400"
+                                            }`}
+                                          >
+                                            {option.label}
+                                          </span>
+                                          <span className="text-[10px] text-gray-600 block">
+                                            {option.desc}
+                                          </span>
+                                          {isSelected && (
+                                            <motion.div
+                                              initial={{ scale: 0 }}
+                                              animate={{ scale: 1 }}
+                                              className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center"
+                                            >
+                                              <Check className="w-2.5 h-2.5 text-black" />
+                                            </motion.div>
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {editingService.payment_mode === "online" &&
+                                  editingService.price > 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                                      <DollarSign className="w-3.5 h-3.5 text-green-400" />
+                                      <span className="text-xs text-green-400">
+                                        Customers pay ${editingService.price.toFixed(2)} online
+                                        when booking
+                                      </span>
+                                    </div>
+                                  )}
+
+                                {editingService.payment_mode === "in_store" &&
+                                  editingService.price > 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                      <Store className="w-3.5 h-3.5 text-amber-400" />
+                                      <span className="text-xs text-amber-400">
+                                        Customers pay ${editingService.price.toFixed(2)} at your
+                                        location
+                                      </span>
+                                    </div>
+                                  )}
+
+                                <div className="flex items-center gap-2 pt-1">
+                                  <Button
+                                    onClick={async () => {
+                                      if (!editingService.name) {
+                                        toast.error("Service name is required");
+                                        return;
+                                      }
+                                      setSavingService(true);
+                                      try {
+                                        // We need a profile ID. If editing an existing profile, use that. 
+                                        // Otherwise, save the profile first.
+                                        let profileId = formData.id;
+                                        if (!profileId) {
+                                          await saveBusinessProfile({
+                                            business_name: formData.business_name,
+                                            address: formData.address || undefined,
+                                            phone_number: formData.phone_number || undefined,
+                                            email: formData.email || undefined,
+                                            logo_url: formData.logo_url || undefined,
+                                            booking_slug: formData.booking_slug,
+                                            theme_color: formData.theme_color,
+                                            accent_color: formData.accent_color,
+                                            dark_mode: formData.dark_mode,
+                                            payments_enabled: true,
+                                          });
+                                          const profiles = await getAllBusinessProfiles();
+                                          const found = profiles.find(
+                                            (p: any) => p.booking_slug === formData.booking_slug
+                                          );
+                                          if (found) {
+                                            profileId = found.id;
+                                            setFormData((prev) => ({ ...prev, id: found.id }));
+                                            setExistingProfile(found);
+                                          }
+                                        }
+                                        if (!profileId) throw new Error("Profile needed");
+
+                                        await saveService({
+                                          id: editingService.id,
+                                          business_profile_id: profileId,
+                                          name: editingService.name,
+                                          description: editingService.description,
+                                          duration_minutes: editingService.duration_minutes,
+                                          price: editingService.price,
+                                          is_paid: editingService.payment_mode !== "free",
+                                          is_active: true,
+                                        });
+
+                                        toast.success(
+                                          editingService.id
+                                            ? "Service updated"
+                                            : "Service added"
+                                        );
+
+                                        // Reload services
+                                        const svcData = await getServicesForProfile(profileId);
+                                        setServices(
+                                          svcData.map((s: any) => ({
+                                            ...s,
+                                            payment_mode:
+                                              s.is_paid && Number(s.price) > 0
+                                                ? "online"
+                                                : "free",
+                                          }))
+                                        );
+                                        setEditingService(null);
+                                      } catch (error: any) {
+                                        toast.error(
+                                          error.message || "Failed to save service"
+                                        );
+                                      } finally {
+                                        setSavingService(false);
+                                      }
+                                    }}
+                                    disabled={savingService || !editingService.name}
+                                    className="h-8 px-4 rounded-lg bg-white text-black text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
+                                  >
+                                    {savingService ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                                    ) : (
+                                      <Check className="w-3.5 h-3.5 mr-1.5" />
+                                    )}
+                                    {editingService.id ? "Update" : "Add Service"}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    onClick={() => setEditingService(null)}
+                                    className="h-8 text-gray-400 hover:text-white hover:bg-white/5 text-xs"
+                                  >
+                                    <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        {/* Services List */}
+                        <div className="space-y-2">
+                          {services.length === 0 && !editingService && (
+                            <div className="text-center py-6">
+                              <Scissors className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                              <p className="text-xs text-gray-500">
+                                No products yet. Add your first service above.
+                              </p>
+                            </div>
+                          )}
+
+                          {services.map((service) => (
+                            <div
+                              key={service.id}
+                              className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:border-white/10 hover:bg-white/5 transition-all group"
+                            >
+                              <div
+                                className={`w-1 h-10 rounded-full shrink-0 ${
+                                  service.is_paid && Number(service.price) > 0
+                                    ? "bg-green-500/50"
+                                    : "bg-teal-500/50"
+                                }`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm text-white font-medium truncate">
+                                    {service.name}
+                                  </span>
+                                  {service.is_paid && Number(service.price) > 0 ? (
+                                    <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full border border-green-500/30 flex items-center gap-0.5">
+                                      <DollarSign className="w-2.5 h-2.5" />
+                                      {Number(service.price).toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] bg-white/10 text-gray-400 px-1.5 py-0.5 rounded-full">
+                                      Free
+                                    </span>
+                                  )}
+                                  {service.payment_mode === "in_store" && (
+                                    <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full border border-amber-500/30">
+                                      In-Store
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                  <Clock className="w-3 h-3" /> {service.duration_minutes} min
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() =>
+                                    setEditingService({
+                                      ...service,
+                                      business_profile_id: formData.id || "",
+                                      payment_mode:
+                                        service.is_paid && Number(service.price) > 0
+                                          ? "online"
+                                          : "free",
+                                    })
+                                  }
+                                  className="p-1.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!service.id) return;
+                                    if (!confirm("Delete this service?")) return;
+                                    try {
+                                      await deleteService(service.id);
+                                      toast.success("Service deleted");
+                                      if (formData.id) {
+                                        const svcData = await getServicesForProfile(formData.id);
+                                        setServices(
+                                          svcData.map((s: any) => ({
+                                            ...s,
+                                            payment_mode:
+                                              s.is_paid && Number(s.price) > 0
+                                                ? "online"
+                                                : "free",
+                                          }))
+                                        );
+                                      }
+                                    } catch {
+                                      toast.error("Failed to delete");
+                                    }
+                                  }}
+                                  className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Skip if no payments */}
+              {!wantsPayments && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="rounded-xl border border-white/5 bg-white/[0.02] p-5 text-center"
+                >
+                  <Store className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                  <p className="text-sm text-gray-400">
+                    No payment will be required to book
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    You can always enable payments later from the booking link settings
+                  </p>
+                </motion.div>
+              )}
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+              className="flex items-center justify-between mt-6"
+            >
+              <Button
+                variant="ghost"
+                onClick={() => goToStep("theme")}
+                className="text-gray-400 hover:text-white hover:bg-white/5 gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back
+              </Button>
+              <Button
                 onClick={() => goToStep("preview")}
                 className="h-11 px-8 rounded-full bg-white text-black font-medium hover:bg-gray-200 transition-all active:scale-[0.98]"
               >
@@ -1098,7 +1792,7 @@ export function BookingLinkSetup() {
           </motion.div>
         )}
 
-        {/* STEP 5: Full Preview & Publish */}
+        {/* STEP 6: Full Preview & Publish */}
         {step === "preview" && (
           <motion.div
             key="preview"
@@ -1391,7 +2085,7 @@ export function BookingLinkSetup() {
             >
               <Button
                 variant="ghost"
-                onClick={() => goToStep("theme")}
+                onClick={() => goToStep("payment")}
                 className="text-gray-400 hover:text-white hover:bg-white/5 gap-2"
               >
                 <ArrowLeft className="w-4 h-4" /> Back

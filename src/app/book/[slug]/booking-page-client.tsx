@@ -18,8 +18,17 @@ import {
   DollarSign,
   CreditCard,
   Scissors,
+  Store,
 } from "lucide-react";
 import { createClient } from "../../../../supabase/client";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
+import { getStripe } from "@/utils/stripe-client";
 
 interface BookingProfile {
   id: string;
@@ -47,6 +56,7 @@ interface Service {
   price: number;
   is_paid: boolean;
   is_active: boolean;
+  payment_mode?: "online" | "in_store" | "free";
 }
 
 interface BookedSlot {
@@ -113,6 +123,8 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
   const [customerEmail, setCustomerEmail] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [loadingServices, setLoadingServices] = useState(true);
+  const [paymentClientSecret, setPaymentClientSecret] = useState<string | null>(null);
+  const [currentBookingId, setCurrentBookingId] = useState<string | null>(null);
   const supabase = createClient();
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const today = new Date();
@@ -253,7 +265,16 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
 
     try {
       const appointmentTime = parseTimeToDate(selectedTime, selectedDate);
-      const isPaid = selectedService?.is_paid && profile.payments_enabled && profile.stripe_account_id;
+
+      // Determine if online payment is required
+      const isOnlinePaid = selectedService?.is_paid &&
+        selectedService?.payment_mode === "online" &&
+        profile.payments_enabled &&
+        profile.stripe_account_id;
+
+      const isInStorePaid = selectedService?.is_paid &&
+        selectedService?.payment_mode === "in_store";
+
       const paymentAmount = selectedService?.price || 0;
 
       const { data: booking, error: insertError } = await supabase
@@ -266,8 +287,8 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
           service_type: selectedService?.name || "Appointment",
           appointment_time: appointmentTime.toISOString(),
           status: "confirmed",
-          payment_status: isPaid ? "pending" : "not_required",
-          payment_amount: isPaid ? paymentAmount : 0,
+          payment_status: isOnlinePaid ? "pending" : (isInStorePaid ? "pay_in_store" : "not_required"),
+          payment_amount: (isOnlinePaid || isInStorePaid) ? paymentAmount : 0,
           business_profile_id: profile.id,
           service_id: selectedService?.id || null,
         })
@@ -275,31 +296,30 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
         .single();
 
       if (insertError) throw new Error(insertError.message);
+      setCurrentBookingId(booking.id);
 
-      // If paid service, create Stripe checkout session
-      if (isPaid && paymentAmount > 0) {
-        const { data: checkoutData, error: checkoutError } = await supabase.functions.invoke(
+      // If online paid service, create Stripe Payment Intent
+      if (isOnlinePaid && paymentAmount > 0) {
+        const { data: paymentData, error: paymentError } = await supabase.functions.invoke(
           "supabase-functions-stripe-connect",
           {
             body: {
-              action: "create-checkout-session",
+              action: "create-payment-intent",
               business_profile_id: profile.id,
               service_name: selectedService?.name || "Appointment",
               price_cents: Math.round(paymentAmount * 100),
-              customer_name: name,
               customer_email: customerEmail || undefined,
               booking_id: booking.id,
-              success_url: `${SITE_URL}/book/${profile.booking_slug}?payment_success=true&booking_id=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
-              cancel_url: `${SITE_URL}/book/${profile.booking_slug}?payment_cancelled=true&booking_id=${booking.id}`,
             },
           }
         );
 
-        if (checkoutError || !checkoutData?.url) {
-          throw new Error("Failed to create payment session");
+        if (paymentError || !paymentData?.client_secret) {
+          throw new Error("Failed to create payment intent");
         }
 
-        window.location.href = checkoutData.url;
+        setPaymentClientSecret(paymentData.client_secret);
+        setStep("payment");
         return;
       }
 
@@ -326,8 +346,9 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
     const paymentSuccess = params.get("payment_success");
     const bookingId = params.get("booking_id");
     const sessionId = params.get("session_id");
+    const paymentIntent = params.get("payment_intent");
 
-    if (paymentSuccess === "true" && bookingId) {
+    if ((paymentSuccess === "true" || paymentIntent) && bookingId) {
       setStep("submitting");
       const verifyPayment = async () => {
         try {
@@ -335,6 +356,12 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
             await supabase.functions.invoke("supabase-functions-stripe-connect", {
               body: { action: "verify-payment", session_id: sessionId },
             });
+          } else if (paymentIntent) {
+            // Update the booking status directly if we have a successful PI
+            await supabase
+              .from("bookings")
+              .update({ payment_status: "paid" })
+              .eq("id", bookingId);
           }
           setStep("done");
           window.history.replaceState({}, "", `/book/${profile.booking_slug}`);
@@ -907,6 +934,67 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
             </motion.div>
           )}
 
+          {/* Step: Payment */}
+          {step === "payment" && paymentClientSecret && (
+            <motion.div
+              key="payment"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="rounded-2xl p-6 border"
+              style={{ backgroundColor: cardBg, borderColor: cardBorder }}
+            >
+              <h2 className="text-xl font-bold mb-1" style={{ color: textPrimary }}>
+                Complete Payment
+              </h2>
+              <p className="text-sm mb-6" style={{ color: textSecondary }}>
+                Secure checkout for {selectedService?.name}
+              </p>
+
+              <Elements
+                stripe={getStripe()}
+                options={{
+                  clientSecret: paymentClientSecret,
+                  appearance: {
+                    theme: isDark ? 'night' : 'stripe',
+                    variables: {
+                      colorPrimary: accent,
+                    }
+                  }
+                }}
+              >
+                <PaymentIntentForm
+                  clientSecret={paymentClientSecret}
+                  accent={accent}
+                  bg={bg}
+                  isDark={isDark}
+                  textPrimary={textPrimary}
+                  cardBg={cardBg}
+                  cardBorder={cardBorder}
+                  onCancel={() => setStep("confirm")}
+                  onSuccess={async () => {
+                    setStep("submitting");
+                    // Send confirmation email
+                    if (currentBookingId) {
+                      // Update payment status to paid
+                      await supabase
+                        .from("bookings")
+                        .update({ payment_status: "paid" })
+                        .eq("id", currentBookingId);
+
+                      try {
+                        await supabase.functions.invoke("supabase-functions-send-booking-email", {
+                          body: { booking_id: currentBookingId, type: "confirmation" },
+                        });
+                      } catch (e) { console.error(e); }
+                    }
+                    setStep("done");
+                  }}
+                />
+              </Elements>
+            </motion.div>
+          )}
+
           {/* Step: Error */}
           {step === "error" && (
             <motion.div
@@ -973,7 +1061,11 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
                 })}{" "}
                 at {selectedTime}
               </p>
-              {customerEmail ? (
+              {selectedService?.payment_mode === "in_store" ? (
+                <p className="text-xs mb-4" style={{ color: textMuted }}>
+                  You will pay ${Number(selectedService.price).toFixed(2)} at the store.
+                </p>
+              ) : customerEmail ? (
                 <p className="text-xs mb-4" style={{ color: textMuted }}>
                   A confirmation email has been sent to {customerEmail}
                 </p>
@@ -993,8 +1085,8 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
                       <Scissors className="w-3.5 h-3.5" style={{ color: textMuted }} />
                       <span className="text-sm" style={{ color: textPrimary }}>{selectedService.name}</span>
                       {selectedService.is_paid && selectedService.price > 0 && (
-                        <span className="text-xs ml-auto font-mono px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
-                          Paid ${Number(selectedService.price).toFixed(2)}
+                        <span className={`text-xs ml-auto font-mono px-2 py-0.5 rounded-full ${selectedService.payment_mode === 'in_store' ? 'bg-amber-500/20 text-amber-400' : 'bg-green-500/20 text-green-400'}`}>
+                          {selectedService.payment_mode === 'in_store' ? 'Pay In Store' : 'Paid'} ${Number(selectedService.price).toFixed(2)}
                         </span>
                       )}
                     </div>
@@ -1024,5 +1116,85 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
         </p>
       </motion.div>
     </div>
+  );
+}
+
+function PaymentIntentForm({
+  clientSecret,
+  onSuccess,
+  onCancel,
+  accent,
+  bg,
+  isDark,
+  textPrimary,
+  cardBg,
+  cardBorder
+}: {
+  clientSecret: string;
+  onSuccess: () => void;
+  onCancel: () => void;
+  accent: string;
+  bg: string;
+  isDark: boolean;
+  textPrimary: string;
+  cardBg: string;
+  cardBorder: string;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: window.location.href,
+      },
+      redirect: "if_required",
+    });
+
+    if (error) {
+      setErrorMessage(error.message || "An unexpected error occurred.");
+      setLoading(false);
+    } else {
+      onSuccess();
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <PaymentElement options={{
+        layout: 'accordion',
+      }} />
+      {errorMessage && (
+        <div className="text-red-400 text-xs mt-2 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          {errorMessage}
+        </div>
+      )}
+      <div className="flex gap-2 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 h-11 rounded-full text-sm font-medium border"
+          style={{ borderColor: cardBorder, color: textPrimary, backgroundColor: bg }}
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={!stripe || loading}
+          className="flex-1 h-11 rounded-full text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+          style={{ backgroundColor: accent, color: isDark ? bg : "#ffffff" }}
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Pay Now"}
+        </button>
+      </div>
+    </form>
   );
 }
