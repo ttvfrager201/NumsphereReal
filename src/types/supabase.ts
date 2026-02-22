@@ -14,10 +14,92 @@ export type Database = {
   }
   public: {
     Tables: {
+      bookings: {
+        Row: {
+          appointment_time: string
+          business_profile_id: string | null
+          created_at: string
+          customer_email: string | null
+          customer_name: string
+          customer_phone: string | null
+          id: string
+          missed_call_id: string | null
+          notes: string | null
+          payment_amount: number | null
+          payment_status: string | null
+          reschedule_token: string | null
+          service_id: string | null
+          service_type: string
+          status: string
+          stripe_checkout_session_id: string | null
+          stripe_payment_intent_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          appointment_time: string
+          business_profile_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name: string
+          customer_phone?: string | null
+          id?: string
+          missed_call_id?: string | null
+          notes?: string | null
+          payment_amount?: number | null
+          payment_status?: string | null
+          reschedule_token?: string | null
+          service_id?: string | null
+          service_type?: string
+          status?: string
+          stripe_checkout_session_id?: string | null
+          stripe_payment_intent_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          appointment_time?: string
+          business_profile_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string
+          customer_phone?: string | null
+          id?: string
+          missed_call_id?: string | null
+          notes?: string | null
+          payment_amount?: number | null
+          payment_status?: string | null
+          reschedule_token?: string | null
+          service_id?: string | null
+          service_type?: string
+          status?: string
+          stripe_checkout_session_id?: string | null
+          stripe_payment_intent_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bookings_business_profile_id_fkey"
+            columns: ["business_profile_id"]
+            isOneToOne: false
+            referencedRelation: "business_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bookings_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       business_profiles: {
         Row: {
           accent_color: string | null
           address: string | null
+          available_hours: Json | null
           booking_slug: string
           business_name: string
           created_at: string
@@ -25,7 +107,10 @@ export type Database = {
           email: string | null
           id: string
           logo_url: string | null
+          payments_enabled: boolean | null
           phone_number: string | null
+          slot_duration: number | null
+          stripe_account_id: string | null
           theme_color: string | null
           updated_at: string
           user_id: string | null
@@ -33,6 +118,7 @@ export type Database = {
         Insert: {
           accent_color?: string | null
           address?: string | null
+          available_hours?: Json | null
           booking_slug: string
           business_name: string
           created_at?: string
@@ -40,7 +126,10 @@ export type Database = {
           email?: string | null
           id?: string
           logo_url?: string | null
+          payments_enabled?: boolean | null
           phone_number?: string | null
+          slot_duration?: number | null
+          stripe_account_id?: string | null
           theme_color?: string | null
           updated_at?: string
           user_id?: string | null
@@ -48,6 +137,7 @@ export type Database = {
         Update: {
           accent_color?: string | null
           address?: string | null
+          available_hours?: Json | null
           booking_slug?: string
           business_name?: string
           created_at?: string
@@ -55,7 +145,10 @@ export type Database = {
           email?: string | null
           id?: string
           logo_url?: string | null
+          payments_enabled?: boolean | null
           phone_number?: string | null
+          slot_duration?: number | null
+          stripe_account_id?: string | null
           theme_color?: string | null
           updated_at?: string
           user_id?: string | null
@@ -108,6 +201,59 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      services: {
+        Row: {
+          business_profile_id: string | null
+          created_at: string
+          description: string | null
+          duration_minutes: number
+          id: string
+          is_active: boolean | null
+          is_paid: boolean | null
+          name: string
+          price: number
+          sort_order: number | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          business_profile_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number
+          id?: string
+          is_active?: boolean | null
+          is_paid?: boolean | null
+          name: string
+          price?: number
+          sort_order?: number | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          business_profile_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number
+          id?: string
+          is_active?: boolean | null
+          is_paid?: boolean | null
+          name?: string
+          price?: number
+          sort_order?: number | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "services_business_profile_id_fkey"
+            columns: ["business_profile_id"]
+            isOneToOne: false
+            referencedRelation: "business_profiles"
+            referencedColumns: ["id"]
           },
         ]
       }

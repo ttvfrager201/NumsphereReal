@@ -27,9 +27,8 @@ export default async function Dashboard() {
     .from("bookings")
     .select("*")
     .eq("user_id", user.id)
-    .gte("appointment_time", new Date().toISOString())
     .order("appointment_time", { ascending: true })
-    .limit(20);
+    .limit(50);
 
   // Fetch settings
   const { data: settings } = await supabase
@@ -55,11 +54,21 @@ export default async function Dashboard() {
     .from("bookings")
     .select("*", { count: "exact", head: true })
     .eq("user_id", user.id)
-    .gte("created_at", startOfToday) // assuming created_at is when the booking was made
-    .lte("created_at", endOfToday);
+    .gte("appointment_time", startOfToday)
+    .lte("appointment_time", endOfToday)
+    .neq("status", "cancelled");
 
-  // Mock revenue calculation
-  const revenueCaptured = (bookingsToday || 0) * 50; 
+  // Real revenue calculation from paid bookings
+  const { data: paidBookings } = await supabase
+    .from("bookings")
+    .select("payment_amount")
+    .eq("user_id", user.id)
+    .eq("payment_status", "paid");
+
+  const revenueCaptured = (paidBookings || []).reduce(
+    (sum: number, b: any) => sum + (Number(b.payment_amount) || 0),
+    0
+  );
 
   // Conversion rate: (bookings today / calls today) * 100
   const conversionRate = missedCallsToday ? Math.round(((bookingsToday || 0) / missedCallsToday) * 100) : 0;

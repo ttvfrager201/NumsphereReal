@@ -13,12 +13,19 @@ import {
   Loader2,
   Globe,
   Building2,
+  CreditCard,
+  DollarSign,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+  Zap,
 } from "lucide-react";
 import {
   getAllBusinessProfiles,
   deleteBusinessProfileById,
 } from "@/app/dashboard/actions";
 import { toast } from "sonner";
+import { ServiceManager } from "./service-manager";
 
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ||
@@ -32,6 +39,10 @@ interface BookingLink {
   theme_color: string;
   accent_color: string;
   created_at: string;
+  stripe_account_id?: string | null;
+  payments_enabled?: boolean;
+  available_hours?: any;
+  slot_duration?: number;
 }
 
 interface BookingLinksListProps {
@@ -47,6 +58,7 @@ export function BookingLinksList({
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     loadProfiles();
@@ -92,6 +104,10 @@ export function BookingLinksList({
     }
   };
 
+  const toggleExpand = (id: string) => {
+    setExpandedId(expandedId === id ? null : id);
+  };
+
   if (loading) {
     return (
       <div className="min-h-[400px] rounded-xl border border-white/10 bg-white/5 flex items-center justify-center">
@@ -109,7 +125,7 @@ export function BookingLinksList({
             Your Booking Links
           </h3>
           <p className="text-sm text-gray-400 mt-1">
-            Manage your booking pages and share links with customers
+            Manage your booking pages, services & payments
           </p>
         </div>
         <Button
@@ -148,9 +164,9 @@ export function BookingLinksList({
         </motion.div>
       )}
 
-      {/* Links Grid */}
+      {/* Links List - Stacked Cards */}
       {profiles.length > 0 && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-4">
           <AnimatePresence mode="popLayout">
             {profiles.map((profile, index) => (
               <motion.div
@@ -159,59 +175,67 @@ export function BookingLinksList({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ delay: index * 0.05 }}
-                className="group rounded-xl border border-white/10 bg-white/5 overflow-hidden hover:border-white/20 transition-all"
+                className="rounded-xl border border-white/10 bg-white/5 overflow-hidden hover:border-white/20 transition-all"
               >
-                {/* Preview Header with Logo/Image */}
-                <div
-                  className="h-32 relative overflow-hidden"
-                  style={{
-                    backgroundColor: profile.theme_color || "#000000",
-                  }}
-                >
-                  {profile.logo_url ? (
-                    <div className="absolute inset-0 flex items-center justify-center p-6">
+                {/* Card Header */}
+                <div className="flex items-center gap-4 p-5">
+                  {/* Logo/Image */}
+                  <div
+                    className="w-14 h-14 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
+                    style={{
+                      backgroundColor: profile.theme_color || "#000000",
+                    }}
+                  >
+                    {profile.logo_url ? (
                       <img
                         src={profile.logo_url}
                         alt={profile.business_name}
-                        className="w-20 h-20 rounded-xl object-cover shadow-lg"
+                        className="w-full h-full object-cover"
                       />
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div
-                        className="w-16 h-16 rounded-xl flex items-center justify-center border"
-                        style={{
-                          borderColor: `${profile.accent_color || "#ffffff"}30`,
-                          backgroundColor: `${profile.accent_color || "#ffffff"}15`,
-                        }}
-                      >
-                        <Building2
-                          className="w-8 h-8"
-                          style={{ color: profile.accent_color || "#ffffff" }}
-                        />
-                      </div>
-                    </div>
-                  )}
+                    ) : (
+                      <Building2
+                        className="w-6 h-6"
+                        style={{ color: profile.accent_color || "#ffffff" }}
+                      />
+                    )}
+                  </div>
 
-                  {/* Gradient Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                </div>
-
-                {/* Content */}
-                <div className="p-4">
-                  <h4 className="text-base font-semibold text-white mb-1 truncate">
-                    {profile.business_name}
-                  </h4>
-                  <p className="text-xs text-gray-400 font-mono truncate mb-4">
-                    /book/{profile.booking_slug}
-                  </p>
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-base font-semibold text-white truncate">
+                      {profile.business_name}
+                    </h4>
+                    <p className="text-xs text-gray-400 font-mono truncate">
+                      /book/{profile.booking_slug}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      {profile.stripe_account_id ? (
+                        profile.payments_enabled ? (
+                          <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30 flex items-center gap-1">
+                            <CreditCard className="w-2.5 h-2.5" />
+                            Payments Active
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                            <Zap className="w-2.5 h-2.5" />
+                            Setup Incomplete
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full border border-white/10 flex items-center gap-1">
+                          <DollarSign className="w-2.5 h-2.5" />
+                          Free Only
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
                   {/* Actions */}
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <Button
                       onClick={() => onEdit(profile)}
-                      variant="outline"
-                      className="h-9 rounded-lg bg-white text-black hover:bg-black/10 transition-colors duration-200 text-xs gap-1.5"
+                      variant="ghost"
+                      className="h-9 px-3 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 text-xs gap-1.5"
                     >
                       <Edit className="w-3.5 h-3.5" />
                       Edit
@@ -220,8 +244,8 @@ export function BookingLinksList({
                       onClick={() =>
                         handleCopy(profile.booking_slug, profile.id)
                       }
-                      variant="outline"
-                      className="h-9 rounded-lg bg-white text-black hover:bg-black/10 transition-colors duration-200 text-xs gap-1.5"
+                      variant="ghost"
+                      className="h-9 px-3 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 text-xs gap-1.5"
                     >
                       {copiedId === profile.id ? (
                         <>
@@ -235,23 +259,32 @@ export function BookingLinksList({
                         </>
                       )}
                     </Button>
-                  </div>
-
-                  <div className="flex items-center gap-2 mt-2">
                     <a
                       href={`/book/${profile.booking_slug}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex-1"
                     >
                       <Button
                         variant="ghost"
-                        className="w-full h-9 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 text-xs gap-1.5"
+                        className="h-9 px-3 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 text-xs gap-1.5"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                         Open
                       </Button>
                     </a>
+                    <Button
+                      onClick={() => toggleExpand(profile.id)}
+                      variant="ghost"
+                      className="h-9 px-3 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 text-xs gap-1.5"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      Services & Payments
+                      {expandedId === profile.id ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
                     <Button
                       onClick={() =>
                         handleDelete(profile.id, profile.business_name)
@@ -268,6 +301,27 @@ export function BookingLinksList({
                     </Button>
                   </div>
                 </div>
+
+                {/* Expandable Service Manager Section */}
+                <AnimatePresence>
+                  {expandedId === profile.id && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <div className="border-t border-white/10 p-5">
+                        <ServiceManager
+                          businessProfileId={profile.id}
+                          stripeAccountId={profile.stripe_account_id}
+                          paymentsEnabled={profile.payments_enabled}
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             ))}
           </AnimatePresence>

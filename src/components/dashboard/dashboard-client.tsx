@@ -2,6 +2,7 @@
 
 import { SettingsDrawer } from "./settings-drawer";
 import { BookingLinkSetup } from "./booking-link-setup";
+import { RevenueModule } from "./revenue-module";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,12 @@ import {
   PanelLeftClose,
   PanelLeft,
   UserCircle,
+  Calendar,
+  Clock,
+  User,
+  Phone,
+  Mail,
+  DollarSign,
 } from "lucide-react";
 import { updateSettings } from "@/app/dashboard/actions";
 import { signOutAction } from "@/app/actions";
@@ -23,6 +30,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import { format, isToday } from "date-fns";
 
 interface DashboardClientProps {
   missedCalls: any[];
@@ -34,6 +42,18 @@ interface DashboardClientProps {
     revenueCaptured: number;
     conversionRate: number;
   };
+}
+
+interface BookingItem {
+  id: string;
+  customer_name: string;
+  customer_email: string | null;
+  customer_phone: string | null;
+  service_type: string;
+  appointment_time: string;
+  status: string;
+  payment_status: string | null;
+  created_at: string;
 }
 
 type NavItem = "home" | "missed-calls" | "booking-link" | "dashboard";
@@ -54,6 +74,7 @@ export function DashboardClient({
   const [activeNav, setActiveNav] = useState<NavItem>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [liveBookings, setLiveBookings] = useState<BookingItem[]>(bookings);
   const [userData, setUserData] = useState<{
     email: string;
     name: string;
@@ -106,6 +127,8 @@ export function DashboardClient({
     return () => subscription.unsubscribe();
   }, [supabase]);
 
+
+
   useEffect(() => {
     const channel = supabase
       .channel("dashboard-changes")
@@ -124,7 +147,21 @@ export function DashboardClient({
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "bookings" },
-        () => router.refresh(),
+        (payload) => {
+          if (payload.eventType === "INSERT") {
+            const newBooking = payload.new as BookingItem;
+            setLiveBookings((prev) => [newBooking, ...prev]);
+            toast.message("New Booking!", {
+              description: `${newBooking.customer_name} just booked an appointment.`,
+            });
+          } else if (payload.eventType === "UPDATE") {
+            const updated = payload.new as BookingItem;
+            setLiveBookings((prev) =>
+              prev.map((b) => (b.id === updated.id ? updated : b))
+            );
+          }
+          router.refresh();
+        },
       )
       .subscribe();
 
@@ -321,15 +358,200 @@ export function DashboardClient({
                     {stats.bookingsToday}
                   </p>
                 </div>
-                <div className="min-h-[180px] rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col justify-between">
-                  <p className="text-gray-500 uppercase tracking-wider text-xs">
-                    Revenue Captured
-                  </p>
-                  <p className="text-3xl font-bold text-white">
-                    ${stats.revenueCaptured}
-                  </p>
-                </div>
+                <RevenueModule totalRevenue={stats.revenueCaptured} />
               </div>
+
+              {/* Today's Bookings Section */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-gray-400" />
+                      Today&apos;s Bookings
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {format(new Date(), "EEEE, MMMM d")}
+                    </p>
+                  </div>
+                  <span className="text-xs bg-white/10 text-white px-3 py-1 rounded-full font-mono">
+                    {liveBookings.filter((b) => isToday(new Date(b.appointment_time)) && b.status !== "cancelled").length} appointments
+                  </span>
+                </div>
+
+                {(() => {
+                  const todayBookings = liveBookings
+                    .filter(
+                      (b) =>
+                        isToday(new Date(b.appointment_time)) &&
+                        b.status !== "cancelled"
+                    )
+                    .sort(
+                      (a, b) =>
+                        new Date(a.appointment_time).getTime() -
+                        new Date(b.appointment_time).getTime()
+                    );
+
+                  if (todayBookings.length === 0) {
+                    return (
+                      <div className="text-center py-10">
+                        <Calendar className="w-10 h-10 mx-auto mb-3 text-gray-600" />
+                        <p className="text-gray-500 text-sm">
+                          No bookings scheduled for today
+                        </p>
+                        <p className="text-gray-600 text-xs mt-1">
+                          Share your booking link to start getting appointments
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {todayBookings.map((booking) => {
+                        const apptTime = new Date(booking.appointment_time);
+                        const isPast = apptTime < new Date();
+                        return (
+                          <div
+                            key={booking.id}
+                            className={cn(
+                              "flex items-center gap-4 p-4 rounded-xl border transition-colors hover:bg-white/5",
+                              isPast
+                                ? "border-white/5 opacity-60"
+                                : "border-white/10"
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "w-1 h-12 rounded-full shrink-0",
+                                booking.status === "completed"
+                                  ? "bg-green-500"
+                                  : booking.status === "confirmed"
+                                    ? "bg-teal-500"
+                                    : "bg-gray-500"
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <User className="w-3.5 h-3.5 text-gray-400" />
+                                <span className="text-white font-medium text-sm truncate">
+                                  {booking.customer_name}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 text-xs text-gray-500">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {format(apptTime, "h:mm a")}
+                                </span>
+                                {booking.customer_phone && (
+                                  <span className="flex items-center gap-1 font-mono">
+                                    <Phone className="w-3 h-3" />
+                                    {booking.customer_phone}
+                                  </span>
+                                )}
+                                {booking.customer_email && (
+                                  <span className="flex items-center gap-1 truncate">
+                                    <Mail className="w-3 h-3" />
+                                    {booking.customer_email}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {booking.payment_status === "paid" && (
+                                <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30 flex items-center gap-1">
+                                  <DollarSign className="w-2.5 h-2.5" />
+                                  Paid
+                                </span>
+                              )}
+                              {booking.payment_status === "pending" && (
+                                <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
+                                  Pending
+                                </span>
+                              )}
+                              <span
+                                className={cn(
+                                  "text-[10px] px-2 py-0.5 rounded-full border",
+                                  booking.status === "confirmed"
+                                    ? "bg-teal-500/20 text-teal-400 border-teal-500/30"
+                                    : booking.status === "completed"
+                                      ? "bg-green-500/20 text-green-400 border-green-500/30"
+                                      : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                                )}
+                              >
+                                {booking.status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Upcoming Bookings Section */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-gray-400" />
+                  Upcoming Bookings
+                </h2>
+                {(() => {
+                  const upcoming = liveBookings
+                    .filter(
+                      (b) =>
+                        !isToday(new Date(b.appointment_time)) &&
+                        new Date(b.appointment_time) > new Date() &&
+                        b.status !== "cancelled"
+                    )
+                    .sort(
+                      (a, b) =>
+                        new Date(a.appointment_time).getTime() -
+                        new Date(b.appointment_time).getTime()
+                    )
+                    .slice(0, 10);
+
+                  if (upcoming.length === 0) {
+                    return (
+                      <p className="text-gray-500 text-sm text-center py-6">
+                        No upcoming bookings
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      {upcoming.map((booking) => {
+                        const apptTime = new Date(booking.appointment_time);
+                        return (
+                          <div
+                            key={booking.id}
+                            className="flex items-center justify-between p-3 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-1 h-8 rounded-full bg-teal-500/50 shrink-0" />
+                              <div>
+                                <span className="text-sm text-white font-medium">
+                                  {booking.customer_name}
+                                </span>
+                                <p className="text-xs text-gray-500 font-mono">
+                                  {format(apptTime, "EEE, MMM d")} at{" "}
+                                  {format(apptTime, "h:mm a")}
+                                </p>
+                              </div>
+                            </div>
+                            {booking.customer_phone && (
+                              <span className="text-xs text-gray-500 font-mono">
+                                {booking.customer_phone}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
               <div className="grid gap-6 sm:grid-cols-2">
                 <div className="min-h-[200px] rounded-xl border border-white/10 bg-white/5 p-6">
                   <h2 className="text-lg font-semibold text-white mb-4">
@@ -356,9 +578,15 @@ export function DashboardClient({
                     </button>
                   </div>
                 </div>
-                <div className="min-h-[200px] rounded-xl border border-white/10 bg-white/5 p-6 flex items-center justify-center">
-                  <p className="text-gray-500 uppercase tracking-wider text-sm">
-                    Empty
+                <div className="min-h-[200px] rounded-xl border border-white/10 bg-white/5 p-6">
+                  <h2 className="text-lg font-semibold text-white mb-2">
+                    Conversion Rate
+                  </h2>
+                  <p className="text-5xl font-bold text-white mt-4">
+                    {stats.conversionRate}%
+                  </p>
+                  <p className="text-gray-500 text-xs mt-2 uppercase tracking-wider">
+                    Calls → Bookings
                   </p>
                 </div>
               </div>
@@ -394,15 +622,107 @@ export function DashboardClient({
               </h1>
               <p className="text-gray-400">Calls + appointments overview.</p>
               <div className="grid gap-6 sm:grid-cols-2">
-                <div className="min-h-[300px] rounded-xl border border-white/10 bg-white/5 p-8 flex items-center justify-center">
-                  <p className="text-gray-500 uppercase tracking-wider text-sm">
-                    Calls
-                  </p>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-400" />
+                    All Bookings
+                  </h3>
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {liveBookings.length === 0 ? (
+                      <p className="text-gray-500 text-sm text-center py-8">
+                        No bookings yet
+                      </p>
+                    ) : (
+                      liveBookings
+                        .sort(
+                          (a, b) =>
+                            new Date(a.appointment_time).getTime() -
+                            new Date(b.appointment_time).getTime()
+                        )
+                        .map((booking) => {
+                          const apptTime = new Date(booking.appointment_time);
+                          return (
+                            <div
+                              key={booking.id}
+                              className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
+                            >
+                              <div
+                                className={cn(
+                                  "w-1 h-10 rounded-full shrink-0",
+                                  booking.status === "completed"
+                                    ? "bg-green-500"
+                                    : booking.status === "confirmed"
+                                      ? "bg-teal-500"
+                                      : booking.status === "cancelled"
+                                        ? "bg-red-500"
+                                        : "bg-gray-500"
+                                )}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-white font-medium truncate">
+                                  {booking.customer_name}
+                                </p>
+                                <p className="text-xs text-gray-500 font-mono">
+                                  {format(apptTime, "MMM d, h:mm a")}
+                                </p>
+                              </div>
+                              <span
+                                className={cn(
+                                  "text-[10px] px-2 py-0.5 rounded-full border shrink-0",
+                                  booking.status === "confirmed"
+                                    ? "bg-teal-500/20 text-teal-400 border-teal-500/30"
+                                    : booking.status === "completed"
+                                      ? "bg-green-500/20 text-green-400 border-green-500/30"
+                                      : booking.status === "cancelled"
+                                        ? "bg-red-500/20 text-red-400 border-red-500/30"
+                                        : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                                )}
+                              >
+                                {booking.status}
+                              </span>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
                 </div>
-                <div className="min-h-[300px] rounded-xl border border-white/10 bg-white/5 p-8 flex items-center justify-center">
-                  <p className="text-gray-500 uppercase tracking-wider text-sm">
-                    Appointments
-                  </p>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <h3 className="text-sm font-semibold text-white mb-4">
+                    Recent Activity
+                  </h3>
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {liveBookings
+                      .sort(
+                        (a, b) =>
+                          new Date(b.created_at).getTime() -
+                          new Date(a.created_at).getTime()
+                      )
+                      .slice(0, 10)
+                      .map((booking) => (
+                        <div
+                          key={booking.id}
+                          className="p-3 rounded-lg border border-white/5"
+                        >
+                          <p className="text-sm text-white">
+                            <span className="font-medium">
+                              {booking.customer_name}
+                            </span>{" "}
+                            booked an appointment
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {format(
+                              new Date(booking.created_at),
+                              "MMM d, h:mm a"
+                            )}
+                          </p>
+                        </div>
+                      ))}
+                    {liveBookings.length === 0 && (
+                      <p className="text-gray-500 text-sm text-center py-8">
+                        No activity yet
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

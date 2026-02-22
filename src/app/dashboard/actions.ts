@@ -59,6 +59,9 @@ export async function saveBusinessProfile(profile: {
   theme_color?: string;
   accent_color?: string;
   dark_mode?: boolean;
+  payments_enabled?: boolean;
+  available_hours?: any;
+  slot_duration?: number;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -79,6 +82,9 @@ export async function saveBusinessProfile(profile: {
         theme_color: profile.theme_color,
         accent_color: profile.accent_color,
         dark_mode: profile.dark_mode,
+        payments_enabled: profile.payments_enabled,
+        available_hours: profile.available_hours,
+        slot_duration: profile.slot_duration,
         updated_at: new Date().toISOString(),
       })
       .eq("id", profile.id)
@@ -100,6 +106,9 @@ export async function saveBusinessProfile(profile: {
         theme_color: profile.theme_color,
         accent_color: profile.accent_color,
         dark_mode: profile.dark_mode,
+        payments_enabled: profile.payments_enabled,
+        available_hours: profile.available_hours,
+        slot_duration: profile.slot_duration,
       });
 
     if (error) throw new Error(error.message);
@@ -232,6 +241,124 @@ export async function deleteBusinessProfile() {
   const { error } = await supabase
     .from("business_profiles")
     .delete()
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard");
+}
+
+// Services CRUD
+export async function getServicesForProfile(businessProfileId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data, error } = await supabase
+    .from("services")
+    .select("*")
+    .eq("business_profile_id", businessProfileId)
+    .eq("user_id", user.id)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function saveService(service: {
+  id?: string;
+  business_profile_id: string;
+  name: string;
+  description?: string;
+  duration_minutes: number;
+  price: number;
+  is_paid: boolean;
+  is_active?: boolean;
+}) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  if (service.id) {
+    const { error } = await supabase
+      .from("services")
+      .update({
+        name: service.name,
+        description: service.description,
+        duration_minutes: service.duration_minutes,
+        price: service.price,
+        is_paid: service.is_paid,
+        is_active: service.is_active ?? true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", service.id)
+      .eq("user_id", user.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase
+      .from("services")
+      .insert({
+        business_profile_id: service.business_profile_id,
+        user_id: user.id,
+        name: service.name,
+        description: service.description,
+        duration_minutes: service.duration_minutes,
+        price: service.price,
+        is_paid: service.is_paid,
+        is_active: service.is_active ?? true,
+      });
+    if (error) throw new Error(error.message);
+  }
+
+  revalidatePath("/dashboard");
+}
+
+export async function deleteService(id: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase
+    .from("services")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard");
+}
+
+export async function updateBusinessProfileStripe(profileId: string, stripeAccountId: string, paymentsEnabled: boolean) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase
+    .from("business_profiles")
+    .update({
+      stripe_account_id: stripeAccountId,
+      payments_enabled: paymentsEnabled,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", profileId)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard");
+}
+
+export async function updateAvailableHours(profileId: string, availableHours: any, slotDuration: number) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase
+    .from("business_profiles")
+    .update({
+      available_hours: availableHours,
+      slot_duration: slotDuration,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", profileId)
     .eq("user_id", user.id);
 
   if (error) throw new Error(error.message);
