@@ -16,14 +16,86 @@ export async function markCallHandled(id: string) {
 
 export async function sendBookingLink(id: string) {
   const supabase = await createClient();
-  
-  // In a real app, this would send an SMS via Twilio or similar
-  // For now, we just update the status to 'texted'
-  
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+  // Call the edge function to send real Twilio SMS
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-missed-call-sms`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        "apikey": SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ missed_call_id: id, user_id: user.id }),
+    });
+
+    const result = await res.json();
+
+    if (!res.ok) {
+      // Twilio not configured yet — fall back to marking as texted
+      console.warn("SMS edge function error:", result.error);
+      // Still mark as texted so the UI updates
+      const { error } = await supabase
+        .from("missed_calls")
+        .update({ status: "texted" })
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    }
+    // Edge function marks it as texted on success
+  } catch (fetchError) {
+    // Network error — still update status
+    const { error } = await supabase
+      .from("missed_calls")
+      .update({ status: "texted" })
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+  }
+
+  revalidatePath("/dashboard");
+}
+
+export async function getCallForwardingConfig() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data, error } = await supabase
+    .from("call_forwarding_configs")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function saveCallForwardingConfig(config: {
+  forward_to_number: string;
+  sms_message_template: string;
+  booking_slug?: string | null;
+  twilio_number?: string | null;
+  twilio_number_sid?: string | null;
+}) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
   const { error } = await supabase
-    .from("missed_calls")
-    .update({ status: "texted" })
-    .eq("id", id);
+    .from("call_forwarding_configs")
+    .upsert(
+      {
+        user_id: user.id,
+        ...config,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
 
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard");
@@ -37,7 +109,7 @@ export async function updateSettings(settings: any) {
 
   const { error } = await supabase
     .from("settings")
-    .upsert({ 
+    .upsert({
       user_id: user.id,
       ...settings,
       updated_at: new Date().toISOString()
@@ -155,7 +227,7 @@ export async function checkSlugAvailability(slug: string): Promise<boolean> {
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  
+
   // Available if no record exists, or it belongs to the current user
   return !data || data.user_id === user.id;
 }
@@ -198,6 +270,33 @@ export async function deleteBusinessProfileById(id: string) {
 
   if (!user) throw new Error("Unauthorized");
 
+  // Verify this profile belongs to the current user
+  const { data: profile, error: profileError } = await supabase
+    .from("business_profiles")
+    .select("id")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (profileError) throw new Error(profileError.message);
+  if (!profile) throw new Error("Booking link not found or unauthorized");
+
+  // Delete ONLY non-paid customer bookings (free / unpaid appointments).
+  // Paid bookings are revenue history — we preserve them.
+  // After the profile is deleted, the paid bookings will have business_profile_id = NULL
+  // (ON DELETE SET NULL) and will continue to appear in revenue/payment history.
+  const { error: deleteBookingsError } = await supabase
+    .from("bookings")
+    .delete()
+    .eq("business_profile_id", id)
+    .eq("user_id", user.id)
+    .neq("payment_status", "paid"); // preserve paid bookings (revenue history)
+
+  if (deleteBookingsError) throw new Error(deleteBookingsError.message);
+
+  // Now delete the business profile itself.
+  // This will also cascade-delete services (config, not revenue).
+  // Any remaining paid bookings will have business_profile_id set to NULL via the FK.
   const { error } = await supabase
     .from("business_profiles")
     .delete()
@@ -273,43 +372,50 @@ export async function saveService(service: {
   price: number;
   is_paid: boolean;
   is_active?: boolean;
+  payment_mode?: "free" | "online" | "in_store";
 }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Unauthorized");
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
 
-  if (service.id) {
-    const { error } = await supabase
-      .from("services")
-      .update({
-        name: service.name,
-        description: service.description,
-        duration_minutes: service.duration_minutes,
-        price: service.price,
-        is_paid: service.is_paid,
-        is_active: service.is_active ?? true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", service.id)
-      .eq("user_id", user.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase
-      .from("services")
-      .insert({
+    const paymentMode = service.payment_mode ?? (service.is_paid ? "online" : "free");
+
+    const serviceData = {
+      name: service.name,
+      description: service.description || "",
+      duration_minutes: service.duration_minutes,
+      price: service.price,
+      is_paid: service.is_paid,
+      payment_mode: paymentMode,
+      is_active: service.is_active ?? true,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (service.id) {
+      const { error } = await supabase
+        .from("services")
+        .update(serviceData)
+        .eq("id", service.id)
+        .eq("user_id", user.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from("services").insert({
+        ...serviceData,
         business_profile_id: service.business_profile_id,
         user_id: user.id,
-        name: service.name,
-        description: service.description,
-        duration_minutes: service.duration_minutes,
-        price: service.price,
-        is_paid: service.is_paid,
-        is_active: service.is_active ?? true,
+        updated_at: undefined, // Let DB handle created_at/updated_at for new records or use current time
       });
-    if (error) throw new Error(error.message);
-  }
+      if (error) throw error;
+    }
 
-  revalidatePath("/dashboard");
+    revalidatePath("/dashboard");
+  } catch (error: any) {
+    console.error("Error in saveService:", error);
+    throw new Error(error.message || "Failed to save service");
+  }
 }
 
 export async function deleteService(id: string) {

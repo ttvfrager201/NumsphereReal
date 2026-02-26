@@ -125,6 +125,7 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
   const [loadingServices, setLoadingServices] = useState(true);
   const [paymentClientSecret, setPaymentClientSecret] = useState<string | null>(null);
   const [currentBookingId, setCurrentBookingId] = useState<string | null>(null);
+  const [hasPaidOnline, setHasPaidOnline] = useState(false);
   const supabase = createClient();
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const today = new Date();
@@ -266,16 +267,19 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
     try {
       const appointmentTime = parseTimeToDate(selectedTime, selectedDate);
 
-      // Determine if online payment is required
-      const isOnlinePaid = selectedService?.is_paid &&
-        selectedService?.payment_mode === "online" &&
-        profile.payments_enabled &&
-        profile.stripe_account_id;
+      const paymentAmount = selectedService?.price || 0;
 
-      const isInStorePaid = selectedService?.is_paid &&
+      // Determine if online payment is required.
+      // Services table has is_paid + price; payment_mode may not exist in DB (undefined).
+      // If paid + has price and NOT explicitly "in_store", require Stripe Payment Elements.
+      const isInStorePaid =
+        !!selectedService?.is_paid &&
         selectedService?.payment_mode === "in_store";
 
-      const paymentAmount = selectedService?.price || 0;
+      const isOnlinePaid =
+        !!selectedService?.is_paid &&
+        !isInStorePaid &&
+        paymentAmount > 0;
 
       const { data: booking, error: insertError } = await supabase
         .from("bookings")
@@ -297,6 +301,7 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
 
       if (insertError) throw new Error(insertError.message);
       setCurrentBookingId(booking.id);
+      setHasPaidOnline(false);
 
       // If online paid service, create Stripe Payment Intent
       if (isOnlinePaid && paymentAmount > 0) {
@@ -363,6 +368,7 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
               .update({ payment_status: "paid" })
               .eq("id", bookingId);
           }
+          setHasPaidOnline(true);
           setStep("done");
           window.history.replaceState({}, "", `/book/${profile.booking_slug}`);
         } catch {
@@ -965,15 +971,19 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
               >
                 <PaymentIntentForm
                   clientSecret={paymentClientSecret}
+                  customerName={name}
                   accent={accent}
                   bg={bg}
                   isDark={isDark}
                   textPrimary={textPrimary}
+                  textSecondary={textSecondary}
                   cardBg={cardBg}
                   cardBorder={cardBorder}
+                  inputBg={inputBg}
                   onCancel={() => setStep("confirm")}
                   onSuccess={async () => {
                     setStep("submitting");
+                    setHasPaidOnline(true);
                     // Send confirmation email
                     if (currentBookingId) {
                       // Update payment status to paid
@@ -1053,6 +1063,11 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
               <h2 className="text-xl font-bold mb-1" style={{ color: textPrimary }}>
                 You&apos;re Booked!
               </h2>
+              {hasPaidOnline && selectedService?.payment_mode === "online" && selectedService?.is_paid && (
+                <p className="text-sm font-medium mb-2" style={{ color: accent }}>
+                  Thank you for your payment!
+                </p>
+              )}
               <p className="text-sm mb-2" style={{ color: textSecondary }}>
                 {selectedDate?.toLocaleDateString("en-US", {
                   weekday: "long",
@@ -1085,8 +1100,18 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
                       <Scissors className="w-3.5 h-3.5" style={{ color: textMuted }} />
                       <span className="text-sm" style={{ color: textPrimary }}>{selectedService.name}</span>
                       {selectedService.is_paid && selectedService.price > 0 && (
-                        <span className={`text-xs ml-auto font-mono px-2 py-0.5 rounded-full ${selectedService.payment_mode === 'in_store' ? 'bg-amber-500/20 text-amber-400' : 'bg-green-500/20 text-green-400'}`}>
-                          {selectedService.payment_mode === 'in_store' ? 'Pay In Store' : 'Paid'} ${Number(selectedService.price).toFixed(2)}
+                        <span className={`text-xs ml-auto font-mono px-2 py-0.5 rounded-full ${
+                          selectedService.payment_mode === 'in_store'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : hasPaidOnline
+                              ? 'bg-green-500/20 text-green-400'
+                              : 'bg-gray-500/20 text-gray-300'
+                        }`}>
+                          {selectedService.payment_mode === 'in_store'
+                            ? 'Pay In Store'
+                            : hasPaidOnline
+                              ? 'Paid'
+                              : 'Payment pending'} ${Number(selectedService.price).toFixed(2)}
                         </span>
                       )}
                     </div>
@@ -1121,24 +1146,30 @@ export function BookingPageClient({ profile }: { profile: BookingProfile }) {
 
 function PaymentIntentForm({
   clientSecret,
+  customerName,
   onSuccess,
   onCancel,
   accent,
   bg,
   isDark,
   textPrimary,
+  textSecondary,
   cardBg,
-  cardBorder
+  cardBorder,
+  inputBg,
 }: {
   clientSecret: string;
+  customerName: string;
   onSuccess: () => void;
   onCancel: () => void;
   accent: string;
   bg: string;
   isDark: boolean;
   textPrimary: string;
+  textSecondary: string;
   cardBg: string;
   cardBorder: string;
+  inputBg: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -1148,12 +1179,22 @@ function PaymentIntentForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stripe || !elements) return;
+    if (!customerName?.trim()) {
+      setErrorMessage("Please enter your name to complete the payment.");
+      return;
+    }
 
     setLoading(true);
+    setErrorMessage("");
     const { error } = await stripe.confirmPayment({
       elements,
       confirmParams: {
         return_url: window.location.href,
+        payment_method_data: {
+          billing_details: {
+            name: customerName.trim(),
+          },
+        },
       },
       redirect: "if_required",
     });
@@ -1168,8 +1209,23 @@ function PaymentIntentForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div
+        className="rounded-lg px-3 py-2.5 border flex items-center gap-2"
+        style={{ backgroundColor: inputBg, borderColor: cardBorder }}
+      >
+        <User className="w-4 h-4 flex-shrink-0" style={{ color: textSecondary }} />
+        <div>
+          <p className="text-[10px] font-medium" style={{ color: textSecondary }}>
+            Cardholder name (required)
+          </p>
+          <p className="text-sm font-medium" style={{ color: textPrimary }}>
+            {customerName || "—"}
+          </p>
+        </div>
+      </div>
       <PaymentElement options={{
-        layout: 'accordion',
+        layout: "accordion",
+        paymentMethodOrder: ["card", "google_pay", "apple_pay"],
       }} />
       {errorMessage && (
         <div className="text-red-400 text-xs mt-2 flex items-center gap-1">

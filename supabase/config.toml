@@ -1,3 +1,6 @@
 [functions]
 [functions.payments-webhook]
 verify_jwt = false
+
+[functions.twilio-call-webhook]
+verify_jwt = false

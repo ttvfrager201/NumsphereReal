@@ -2,7 +2,10 @@
 
 import { SettingsDrawer } from "./settings-drawer";
 import { BookingLinkSetup } from "./booking-link-setup";
-import { RevenueModule } from "./revenue-module";
+import { MissedCallFeed } from "./missed-call-feed";
+import { MissedCallSetup } from "./missed-call-setup";
+import { RevenueModule, PaymentDetailDialog } from "./revenue-module";
+
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,8 +23,14 @@ import {
   Phone,
   Mail,
   DollarSign,
+  CreditCard,
+  Store,
+  PhoneOff,
+  Zap,
+  Plus,
+  Loader2,
 } from "lucide-react";
-import { updateSettings } from "@/app/dashboard/actions";
+import { updateSettings, sendBookingLink, markCallHandled, createMockCall } from "@/app/dashboard/actions";
 import { signOutAction } from "@/app/actions";
 import { toast } from "sonner";
 import { createClient } from "../../../supabase/client";
@@ -39,6 +48,7 @@ interface DashboardClientProps {
     missedCallsToday: number;
     bookingsToday: number;
     revenueCaptured: number;
+    revenueToday?: number;
     conversionRate: number;
   };
 }
@@ -52,6 +62,7 @@ interface BookingItem {
   appointment_time: string;
   status: string;
   payment_status: string | null;
+  payment_amount: number | null;
   created_at: string;
 }
 
@@ -74,6 +85,9 @@ export function DashboardClient({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [liveBookings, setLiveBookings] = useState<BookingItem[]>(bookings);
+  const [selectedPaymentBooking, setSelectedPaymentBooking] = useState<BookingItem | null>(null);
+  const [revenueFilter, setRevenueFilter] = useState<"all" | "online" | "in_store">("all");
+  const [missedCallsTab, setMissedCallsTab] = useState<"setup" | "feed">("setup");
   const [userData, setUserData] = useState<{
     email: string;
     name: string;
@@ -371,7 +385,11 @@ export function DashboardClient({
                     {stats.bookingsToday}
                   </p>
                 </div>
-                <RevenueModule totalRevenue={stats.revenueCaptured} />
+                <RevenueModule
+                  totalRevenue={stats.revenueToday ?? stats.revenueCaptured}
+                  compact
+                  onNavigateToRevenue={() => setActiveNav("revenue")}
+                />
               </div>
 
               {/* Today's Bookings Section */}
@@ -611,21 +629,130 @@ export function DashboardClient({
             </div>
           )}
 
-          {activeNav === "missed-calls" && (
-            <div className="space-y-6">
-              <h1 className="text-2xl font-bold tracking-tight text-white">
-                Missed Call Text-Back
-              </h1>
-              <p className="text-gray-400">
-                Automatically text back when you miss a call.
-              </p>
-              <div className="min-h-[400px] rounded-xl border border-white/10 bg-white/5 p-8 flex items-center justify-center">
-                <p className="text-gray-500 uppercase tracking-wider text-sm">
-                  Empty
-                </p>
+          {activeNav === "missed-calls" && (() => {
+            const liveMissedCalls = missedCalls;
+            const newCalls = liveMissedCalls.filter((c: any) => c.status === "new");
+            const textedCalls = liveMissedCalls.filter((c: any) => c.status === "texted");
+            const bookedCalls = liveMissedCalls.filter((c: any) => c.status === "booked");
+            const handledCalls = liveMissedCalls.filter((c: any) => c.status === "handled");
+
+            return (
+              <div className="space-y-6">
+                {/* Header */}
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-white">
+                      Missed Call Text-Back
+                    </h1>
+                    <p className="text-gray-400 mt-1 text-sm">
+                      Auto-text missed callers your booking link &amp; turn them into appointments.
+                    </p>
+                  </div>
+                  {missedCallsTab === "feed" && (
+                    <Button
+                      onClick={async () => {
+                        try {
+                          await createMockCall();
+                          toast.success("Mock missed call created!");
+                          router.refresh();
+                        } catch {
+                          toast.error("Failed to create mock call");
+                        }
+                      }}
+                      className="h-9 px-4 rounded-full bg-white/10 text-white font-medium hover:bg-white/20 transition-all active:scale-[0.98] gap-2 text-sm border border-white/10"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Simulate Call
+                    </Button>
+                  )}
+                </div>
+
+                {/* Tab switcher */}
+                <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-xl p-1 w-fit">
+                  <button
+                    onClick={() => setMissedCallsTab("setup")}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                      missedCallsTab === "setup"
+                        ? "bg-white/10 text-white"
+                        : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    Setup
+                  </button>
+                  <button
+                    onClick={() => setMissedCallsTab("feed")}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                      missedCallsTab === "feed"
+                        ? "bg-white/10 text-white"
+                        : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    <PhoneOff className="w-3.5 h-3.5" />
+                    Call Feed
+                    {newCalls.length > 0 && (
+                      <span className="min-w-[18px] h-[18px] rounded-full bg-amber-500 text-black text-[10px] font-bold flex items-center justify-center px-1">
+                        {newCalls.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {/* Setup tab */}
+                {missedCallsTab === "setup" && <MissedCallSetup />}
+
+                {/* Feed tab */}
+                {missedCallsTab === "feed" && (
+                  <div className="space-y-5">
+                    {/* Stats row */}
+                    <div className="grid gap-3 grid-cols-4">
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <p className="text-gray-500 uppercase tracking-wider text-[10px] font-medium">New</p>
+                        <p className="text-2xl font-bold text-amber-400 mt-1">{newCalls.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <p className="text-gray-500 uppercase tracking-wider text-[10px] font-medium">Link Sent</p>
+                        <p className="text-2xl font-bold text-teal-400 mt-1">{textedCalls.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <p className="text-gray-500 uppercase tracking-wider text-[10px] font-medium">Booked</p>
+                        <p className="text-2xl font-bold text-green-400 mt-1">{bookedCalls.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <p className="text-gray-500 uppercase tracking-wider text-[10px] font-medium">Handled</p>
+                        <p className="text-2xl font-bold text-gray-400 mt-1">{handledCalls.length}</p>
+                      </div>
+                    </div>
+
+                    {/* Feed */}
+                    <MissedCallFeed
+                      calls={liveMissedCalls}
+                      onSendLink={async (id: string) => {
+                        try {
+                          await sendBookingLink(id);
+                          toast.success("Booking link sent!");
+                          router.refresh();
+                        } catch {
+                          toast.error("Failed to send link");
+                        }
+                      }}
+                      onMarkHandled={async (id: string) => {
+                        try {
+                          await markCallHandled(id);
+                          toast.success("Call marked as handled");
+                          router.refresh();
+                        } catch {
+                          toast.error("Failed to mark call");
+                        }
+                      }}
+                    />
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {activeNav === "booking-link" && (
             <div className="space-y-6">
@@ -633,148 +760,194 @@ export function DashboardClient({
             </div>
           )}
 
-          {activeNav === "revenue" && (
-            <div className="space-y-6">
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-white">
-                  Total Revenue
-                </h1>
-                <p className="text-gray-400">
-                  Track your earnings, payouts, and payment history.
-                </p>
-              </div>
+          {activeNav === "revenue" && (() => {
+            const onlineRevenue = liveBookings
+              .filter((b) => b.payment_status === "paid")
+              .reduce((sum, b) => sum + (Number(b.payment_amount) || 0), 0);
+            const inStoreRevenue = liveBookings
+              .filter((b) => b.payment_status === "pay_in_store")
+              .reduce((sum, b) => sum + (Number(b.payment_amount) || 0), 0);
+            const paidBookings = liveBookings
+              .filter(
+                (b) =>
+                  b.payment_status === "paid" ||
+                  b.payment_status === "pay_in_store"
+              )
+              .filter((b) => {
+                if (revenueFilter === "online") return b.payment_status === "paid";
+                if (revenueFilter === "in_store") return b.payment_status === "pay_in_store";
+                return true;
+              })
+              .sort(
+                (a, b) =>
+                  new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+            return (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-white">
+                      Revenue Dashboard
+                    </h1>
+                    <p className="text-gray-400">
+                      Track online and in-person earnings.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+                    {(
+                      [
+                        { id: "all" as const, label: "All" },
+                        { id: "online" as const, label: "Online" },
+                        { id: "in_store" as const, label: "In Person" },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        onClick={() => setRevenueFilter(opt.id)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                          revenueFilter === opt.id
+                            ? "bg-white/10 text-white"
+                            : "text-gray-400 hover:text-white"
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              {/* Revenue Module - Full Width */}
-              <RevenueModule totalRevenue={stats.revenueCaptured} />
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                    <p className="text-gray-500 uppercase tracking-wider text-xs mb-2 flex items-center gap-1">
+                      <CreditCard className="w-3 h-3 text-green-400" />
+                      Online Revenue
+                    </p>
+                    <p className="text-3xl font-bold text-green-400 font-mono">
+                      ${onlineRevenue.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                    <p className="text-gray-500 uppercase tracking-wider text-xs mb-2 flex items-center gap-1">
+                      <Store className="w-3 h-3 text-amber-400" />
+                      In Person Revenue
+                    </p>
+                    <p className="text-3xl font-bold text-amber-400 font-mono">
+                      ${inStoreRevenue.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
 
-              {/* Paid Bookings */}
-              <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-green-400" />
-                  Payment History
-                </h3>
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                  {(() => {
-                    const paidBookings = liveBookings
-                      .filter(
-                        (b) =>
-                          b.payment_status === "paid" ||
-                          b.payment_status === "pending"
-                      )
-                      .sort(
-                        (a, b) =>
-                          new Date(b.created_at).getTime() -
-                          new Date(a.created_at).getTime()
-                      );
+                <RevenueModule totalRevenue={stats.revenueCaptured} />
 
-                    if (paidBookings.length === 0) {
-                      return (
-                        <div className="text-center py-10">
-                          <DollarSign className="w-10 h-10 mx-auto mb-3 text-gray-600" />
-                          <p className="text-gray-500 text-sm">
-                            No paid bookings yet
-                          </p>
-                          <p className="text-gray-600 text-xs mt-1">
-                            Enable payments on your booking links to start
-                            earning
-                          </p>
-                        </div>
-                      );
-                    }
-
-                    return paidBookings.map((booking) => {
-                      const apptTime = new Date(booking.appointment_time);
-                      return (
-                        <div
-                          key={booking.id}
-                          className="flex items-center gap-3 p-4 rounded-lg border border-white/5 hover:bg-white/5 transition-colors"
-                        >
-                          <div
-                            className={cn(
-                              "w-1 h-12 rounded-full shrink-0",
-                              booking.payment_status === "paid"
-                                ? "bg-green-500"
-                                : "bg-amber-500"
-                            )}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-white font-medium truncate">
-                              {booking.customer_name}
-                            </p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-xs text-gray-500 font-mono">
-                                {format(apptTime, "MMM d, h:mm a")}
+                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                  <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-green-400" />
+                    Payment History
+                  </h3>
+                  <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                    {paidBookings.length === 0 ? (
+                      <div className="text-center py-10">
+                        <DollarSign className="w-10 h-10 mx-auto mb-3 text-gray-600" />
+                        <p className="text-gray-500 text-sm">
+                          No paid bookings yet
+                        </p>
+                        <p className="text-gray-600 text-xs mt-1">
+                          Enable payments on your booking links to start earning
+                        </p>
+                      </div>
+                    ) : (
+                      paidBookings.map((booking) => {
+                        const apptTime = new Date(booking.appointment_time);
+                        return (
+                          <button
+                            key={booking.id}
+                            type="button"
+                            onClick={() => setSelectedPaymentBooking(booking)}
+                            className="w-full flex items-center gap-3 p-4 rounded-lg border border-white/5 hover:bg-white/5 transition-colors text-left"
+                          >
+                            <div
+                              className={cn(
+                                "w-1 h-12 rounded-full shrink-0",
+                                booking.payment_status === "paid"
+                                  ? "bg-green-500"
+                                  : "bg-amber-500"
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-white font-medium truncate">
+                                {booking.customer_name}
+                              </p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-xs text-gray-500 font-mono">
+                                  {format(apptTime, "MMM d, h:mm a")}
+                                </span>
+                                <span className="text-xs text-gray-600">
+                                  {booking.service_type}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-sm font-mono text-green-400">
+                                ${(Number(booking.payment_amount) || 0).toFixed(2)}
                               </span>
-                              <span className="text-xs text-gray-600">
-                                {booking.service_type}
+                              <span
+                                className={cn(
+                                  "text-[10px] px-2 py-0.5 rounded-full border",
+                                  booking.payment_status === "paid"
+                                    ? "bg-green-500/20 text-green-400 border-green-500/30"
+                                    : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                )}
+                              >
+                                {booking.payment_status === "paid"
+                                  ? "Paid"
+                                  : "In Store"}
                               </span>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span
-                              className={cn(
-                                "text-[10px] px-2 py-0.5 rounded-full border",
-                                booking.payment_status === "paid"
-                                  ? "bg-green-500/20 text-green-400 border-green-500/30"
-                                  : "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                              )}
-                            >
-                              {booking.payment_status === "paid"
-                                ? "Paid"
-                                : "Pending"}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* All Bookings Revenue Summary */}
-              <div className="grid gap-6 sm:grid-cols-3">
-                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
-                    Total Paid Bookings
-                  </p>
-                  <p className="text-3xl font-bold text-white">
-                    {
-                      liveBookings.filter((b) => b.payment_status === "paid")
-                        .length
-                    }
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
-                    Pending Payments
-                  </p>
-                  <p className="text-3xl font-bold text-amber-400">
-                    {
-                      liveBookings.filter(
-                        (b) => b.payment_status === "pending"
-                      ).length
-                    }
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-                  <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
-                    Free Bookings
-                  </p>
-                  <p className="text-3xl font-bold text-gray-400">
-                    {
-                      liveBookings.filter(
-                        (b) =>
-                          !b.payment_status ||
-                          b.payment_status === "not_required"
-                      ).length
-                    }
-                  </p>
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                    <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
+                      Total Paid Bookings
+                    </p>
+                    <p className="text-3xl font-bold text-white">
+                      {liveBookings.filter((b) => b.payment_status === "paid").length}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                    <p className="text-gray-500 uppercase tracking-wider text-xs mb-2">
+                      Free Bookings
+                    </p>
+                    <p className="text-3xl font-bold text-gray-400">
+                      {
+                        liveBookings.filter(
+                          (b) =>
+                            !b.payment_status ||
+                            b.payment_status === "not_required"
+                        ).length
+                      }
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       </main>
+
+      {selectedPaymentBooking && (
+        <PaymentDetailDialog
+          booking={selectedPaymentBooking}
+          open={!!selectedPaymentBooking}
+          onOpenChange={(open) => !open && setSelectedPaymentBooking(null)}
+        />
+      )}
 
       {/* Settings Drawer */}
       <SettingsDrawer

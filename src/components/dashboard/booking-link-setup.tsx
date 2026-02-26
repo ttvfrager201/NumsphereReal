@@ -36,7 +36,16 @@ import {
   Store,
 } from "lucide-react";
 import {
-  saveBusinessProfile,
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import {
   checkSlugAvailability,
   getAllBusinessProfiles,
   uploadBusinessLogo,
@@ -45,6 +54,7 @@ import {
   saveService,
   deleteService,
   updateBusinessProfileStripe,
+  saveBusinessProfile,
 } from "@/app/dashboard/actions";
 import { toast } from "sonner";
 import { BookingLinksList } from "./booking-links-list";
@@ -142,6 +152,8 @@ export function BookingLinkSetup() {
   const [stripeConnected, setStripeConnected] = useState(false);
   const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
   const [services, setServices] = useState<ServiceItem[]>([]);
+  const [deleteSetupServiceDialogOpen, setDeleteSetupServiceDialogOpen] = useState(false);
+  const [pendingDeleteSetupServiceId, setPendingDeleteSetupServiceId] = useState<string | null>(null);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
   const [savingService, setSavingService] = useState(false);
 
@@ -259,7 +271,7 @@ export function BookingLinkSetup() {
       const svcData = await getServicesForProfile(profile.id);
       setServices(svcData.map((s: any) => ({
         ...s,
-        payment_mode: s.is_paid && Number(s.price) > 0 ? "online" : "free",
+        payment_mode: s.payment_mode ?? (s.is_paid && Number(s.price) > 0 ? "online" : "free"),
       })));
     } catch {
       setServices([]);
@@ -1598,6 +1610,7 @@ export function BookingLinkSetup() {
                                           price: editingService.price,
                                           is_paid: editingService.payment_mode !== "free",
                                           is_active: true,
+                                          payment_mode: editingService.payment_mode,
                                         });
 
                                         toast.success(
@@ -1611,10 +1624,7 @@ export function BookingLinkSetup() {
                                         setServices(
                                           svcData.map((s: any) => ({
                                             ...s,
-                                            payment_mode:
-                                              s.is_paid && Number(s.price) > 0
-                                                ? "online"
-                                                : "free",
+                                            payment_mode: s.payment_mode ?? (s.is_paid && Number(s.price) > 0 ? "online" : "free"),
                                           }))
                                         );
                                         setEditingService(null);
@@ -1714,27 +1724,10 @@ export function BookingLinkSetup() {
                                   <Edit className="w-3.5 h-3.5" />
                                 </button>
                                 <button
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (!service.id) return;
-                                    if (!confirm("Delete this service?")) return;
-                                    try {
-                                      await deleteService(service.id);
-                                      toast.success("Service deleted");
-                                      if (formData.id) {
-                                        const svcData = await getServicesForProfile(formData.id);
-                                        setServices(
-                                          svcData.map((s: any) => ({
-                                            ...s,
-                                            payment_mode:
-                                              s.is_paid && Number(s.price) > 0
-                                                ? "online"
-                                                : "free",
-                                          }))
-                                        );
-                                      }
-                                    } catch {
-                                      toast.error("Failed to delete");
-                                    }
+                                    setPendingDeleteSetupServiceId(service.id);
+                                    setDeleteSetupServiceDialogOpen(true);
                                   }}
                                   className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors"
                                 >

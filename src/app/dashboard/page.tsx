@@ -58,10 +58,10 @@ export default async function Dashboard() {
     .lte("appointment_time", endOfToday)
     .neq("status", "cancelled");
 
-  // Real revenue calculation from paid bookings
+  // Real revenue calculation from paid bookings (lifetime)
   const { data: paidBookings } = await supabase
     .from("bookings")
-    .select("payment_amount")
+    .select("payment_amount, created_at")
     .eq("user_id", user.id)
     .eq("payment_status", "paid");
 
@@ -69,6 +69,13 @@ export default async function Dashboard() {
     (sum: number, b: any) => sum + (Number(b.payment_amount) || 0),
     0
   );
+
+  const revenueToday = (paidBookings || [])
+    .filter((b: any) => {
+      const d = new Date(b.created_at);
+      return d >= new Date(startOfToday) && d <= new Date(endOfToday);
+    })
+    .reduce((sum: number, b: any) => sum + (Number(b.payment_amount) || 0), 0);
 
   // Conversion rate: (bookings today / calls today) * 100
   const conversionRate = missedCallsToday ? Math.round(((bookingsToday || 0) / missedCallsToday) * 100) : 0;
@@ -82,6 +89,7 @@ export default async function Dashboard() {
         missedCallsToday: missedCallsToday || 0,
         bookingsToday: bookingsToday || 0,
         revenueCaptured,
+        revenueToday,
         conversionRate,
       }}
     />

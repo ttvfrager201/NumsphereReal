@@ -4,6 +4,16 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import {
   Plus,
   Edit,
   Trash2,
@@ -19,6 +29,7 @@ import {
   ChevronDown,
   ChevronUp,
   Zap,
+  AlertTriangle,
 } from "lucide-react";
 import {
   getAllBusinessProfiles,
@@ -59,6 +70,8 @@ export function BookingLinksList({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     loadProfiles();
@@ -84,23 +97,24 @@ export function BookingLinksList({
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (
-      !confirm(
-        `Are you sure you want to delete "${name}"? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+    setPendingDelete({ id, name });
+    setDeleteDialogOpen(true);
+  };
 
-    setDeletingId(id);
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+
+    setDeleteDialogOpen(false);
+    setDeletingId(pendingDelete.id);
     try {
-      await deleteBusinessProfileById(id);
+      await deleteBusinessProfileById(pendingDelete.id);
       toast.success("Booking link deleted");
       await loadProfiles();
     } catch (error: any) {
       toast.error(error.message || "Failed to delete booking link");
     } finally {
       setDeletingId(null);
+      setPendingDelete(null);
     }
   };
 
@@ -327,6 +341,51 @@ export function BookingLinksList({
           </AnimatePresence>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="bg-[#111] border border-white/10 rounded-xl shadow-2xl max-w-md">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <AlertDialogTitle className="text-white text-lg font-bold tracking-tight">
+                Delete Booking Link
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="text-gray-400 text-sm leading-relaxed">
+              Are you sure you want to delete{" "}
+              <span className="text-white font-medium">
+                &ldquo;{pendingDelete?.name}&rdquo;
+              </span>
+              ? This will remove the booking page, all associated services, and
+              upcoming unpaid appointments.{" "}
+              <span className="text-green-400 font-medium">
+                All revenue and payment history will be preserved.
+              </span>{" "}
+              This cannot be undone.
+              {pendingDelete && profiles.find(p => p.id === pendingDelete.id)?.stripe_account_id && (
+                <span className="block mt-3 text-xs text-gray-500">
+                  Your Stripe Express account will not be affected and will remain connected to your other booking links.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel className="bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:text-white rounded-lg">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-red-500 hover:bg-red-600 text-white border-0 rounded-lg"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

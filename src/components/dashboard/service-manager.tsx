@@ -19,6 +19,8 @@ import {
   ExternalLink,
   Zap,
   CalendarDays,
+  Store,
+  AlertTriangle,
 } from "lucide-react";
 import {
   getServicesForProfile,
@@ -29,6 +31,16 @@ import {
 } from "@/app/dashboard/actions";
 import { toast } from "sonner";
 import { createClient } from "../../../supabase/client";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 interface ServiceItem {
   id?: string;
@@ -39,6 +51,7 @@ interface ServiceItem {
   price: number;
   is_paid: boolean;
   is_active: boolean;
+  payment_mode?: "free" | "online" | "in_store";
 }
 
 interface ServiceManagerProps {
@@ -47,10 +60,29 @@ interface ServiceManagerProps {
   paymentsEnabled?: boolean;
 }
 
-const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const DAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+const DAY_KEYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
 
-const DEFAULT_HOURS: Record<string, { enabled: boolean; start: string; end: string }> = {
+const DEFAULT_HOURS: Record<
+  string,
+  { enabled: boolean; start: string; end: string }
+> = {
   monday: { enabled: true, start: "09:00", end: "17:00" },
   tuesday: { enabled: true, start: "09:00", end: "17:00" },
   wednesday: { enabled: true, start: "09:00", end: "17:00" },
@@ -67,10 +99,16 @@ export function ServiceManager({
 }: ServiceManagerProps) {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingService, setEditingService] = useState<ServiceItem | null>(null);
+  const [editingService, setEditingService] = useState<ServiceItem | null>(
+    null,
+  );
   const [isAdding, setIsAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteServiceDialogOpen, setDeleteServiceDialogOpen] = useState(false);
+  const [pendingDeleteServiceId, setPendingDeleteServiceId] = useState<
+    string | null
+  >(null);
   const [connectingStripe, setConnectingStripe] = useState(false);
   const [stripeStatus, setStripeStatus] = useState<{
     charges_enabled: boolean;
@@ -80,7 +118,10 @@ export function ServiceManager({
   const supabase = createClient();
 
   // Availability state
-  const [availableHours, setAvailableHours] = useState<Record<string, { enabled: boolean; start: string; end: string }>>(DEFAULT_HOURS);
+  const [availableHours, setAvailableHours] =
+    useState<Record<string, { enabled: boolean; start: string; end: string }>>(
+      DEFAULT_HOURS,
+    );
   const [slotDuration, setSlotDuration] = useState(30);
   const [savingHours, setSavingHours] = useState(false);
   const [showAvailability, setShowAvailability] = useState(false);
@@ -130,13 +171,20 @@ export function ServiceManager({
       const { data, error } = await supabase.functions.invoke(
         "supabase-functions-stripe-connect",
         {
-          body: { action: "check-account-status", stripe_account_id: stripeAccountId },
-        }
+          body: {
+            action: "check-account-status",
+            stripe_account_id: stripeAccountId,
+          },
+        },
       );
       if (!error && data) {
         setStripeStatus(data);
         if (data.is_enabled && !paymentsEnabled) {
-          await updateBusinessProfileStripe(businessProfileId, stripeAccountId, true);
+          await updateBusinessProfileStripe(
+            businessProfileId,
+            stripeAccountId,
+            true,
+          );
         }
       }
     } catch {
@@ -147,7 +195,9 @@ export function ServiceManager({
   const handleConnectStripe = async () => {
     setConnectingStripe(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
       // Check if user already has a Stripe account on any profile
@@ -158,9 +208,17 @@ export function ServiceManager({
         .not("stripe_account_id", "is", null)
         .limit(1);
 
-      if (existingProfiles && existingProfiles.length > 0 && existingProfiles[0].stripe_account_id) {
+      if (
+        existingProfiles &&
+        existingProfiles.length > 0 &&
+        existingProfiles[0].stripe_account_id
+      ) {
         // Reuse existing Stripe account
-        await updateBusinessProfileStripe(businessProfileId, existingProfiles[0].stripe_account_id, true);
+        await updateBusinessProfileStripe(
+          businessProfileId,
+          existingProfiles[0].stripe_account_id,
+          true,
+        );
         toast.success("Stripe account linked to this booking page!");
         window.location.reload();
         return;
@@ -175,10 +233,11 @@ export function ServiceManager({
             user_id: user.id,
             return_url: `${SITE_URL}/dashboard`,
           },
-        }
+        },
       );
 
-      if (error || !data?.url) throw new Error("Failed to create Stripe account");
+      if (error || !data?.url)
+        throw new Error("Failed to create Stripe account");
 
       window.location.href = data.url;
     } catch (error: any) {
@@ -194,8 +253,11 @@ export function ServiceManager({
       const { data, error } = await supabase.functions.invoke(
         "supabase-functions-stripe-connect",
         {
-          body: { action: "create-login-link", stripe_account_id: stripeAccountId },
-        }
+          body: {
+            action: "create-login-link",
+            stripe_account_id: stripeAccountId,
+          },
+        },
       );
       if (error || !data?.url) throw new Error("Failed");
       window.open(data.url, "_blank");
@@ -216,6 +278,7 @@ export function ServiceManager({
         price: service.price,
         is_paid: service.is_paid,
         is_active: service.is_active,
+        payment_mode: service.payment_mode,
       });
       toast.success(service.id ? "Service updated" : "Service created");
       setEditingService(null);
@@ -229,23 +292,34 @@ export function ServiceManager({
   };
 
   const handleDeleteService = async (id: string) => {
-    if (!confirm("Delete this service?")) return;
-    setDeletingId(id);
+    setPendingDeleteServiceId(id);
+    setDeleteServiceDialogOpen(true);
+  };
+
+  const confirmDeleteService = async () => {
+    if (!pendingDeleteServiceId) return;
+    setDeleteServiceDialogOpen(false);
+    setDeletingId(pendingDeleteServiceId);
     try {
-      await deleteService(id);
+      await deleteService(pendingDeleteServiceId);
       toast.success("Service deleted");
       await loadServices();
     } catch {
       toast.error("Failed to delete service");
     } finally {
       setDeletingId(null);
+      setPendingDeleteServiceId(null);
     }
   };
 
   const handleSaveAvailability = async () => {
     setSavingHours(true);
     try {
-      await updateAvailableHours(businessProfileId, availableHours, slotDuration);
+      await updateAvailableHours(
+        businessProfileId,
+        availableHours,
+        slotDuration,
+      );
       toast.success("Availability updated!");
     } catch (error: any) {
       toast.error(error.message || "Failed to save availability");
@@ -261,7 +335,11 @@ export function ServiceManager({
     }));
   };
 
-  const updateDayTime = (dayKey: string, field: "start" | "end", value: string) => {
+  const updateDayTime = (
+    dayKey: string,
+    field: "start" | "end",
+    value: string,
+  ) => {
     setAvailableHours((prev) => ({
       ...prev,
       [dayKey]: { ...prev[dayKey], [field]: value },
@@ -276,6 +354,7 @@ export function ServiceManager({
     price: 0,
     is_paid: false,
     is_active: true,
+    payment_mode: "free",
   };
 
   const isStripeConnected = stripeAccountId && stripeStatus?.is_enabled;
@@ -289,408 +368,592 @@ export function ServiceManager({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Stripe Connect Section */}
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <CreditCard className="w-4 h-4 text-gray-400" />
-            <h3 className="text-sm font-semibold text-white">Payment Setup</h3>
+    <>
+      <div className="space-y-6">
+        {/* Stripe Connect Section */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-semibold text-white">
+                Payment Setup
+              </h3>
+            </div>
+            {isStripeConnected && (
+              <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30">
+                Connected
+              </span>
+            )}
           </div>
-          {isStripeConnected && (
-            <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full border border-green-500/30">
-              Connected
-            </span>
-          )}
-        </div>
 
-        {!stripeAccountId ? (
-          <div className="space-y-3">
-            <p className="text-xs text-gray-400">
-              Connect Stripe Express to accept payments through your booking page. Your account is shared across all booking links.
-            </p>
-            <Button
-              onClick={handleConnectStripe}
-              disabled={connectingStripe}
-              className="w-full h-10 rounded-lg bg-[#635BFF] hover:bg-[#5349E0] text-white text-sm font-medium"
-            >
-              {connectingStripe ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Zap className="w-4 h-4 mr-2" />
-              )}
-              Connect with Stripe
-            </Button>
-          </div>
-        ) : !stripeStatus?.is_enabled ? (
-          <div className="space-y-3">
-            <p className="text-xs text-amber-400">
-              Stripe account created but onboarding is incomplete. Please finish setup to accept payments.
-            </p>
-            <Button
-              onClick={handleConnectStripe}
-              disabled={connectingStripe}
-              className="w-full h-10 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium"
-            >
-              {connectingStripe ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Zap className="w-4 h-4 mr-2" />
-              )}
-              Complete Stripe Setup
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-xs text-green-400">
-              Stripe is connected and ready to accept payments.
-            </p>
-            <Button
-              variant="ghost"
-              onClick={handleOpenStripeDashboard}
-              className="text-gray-400 hover:text-white hover:bg-white/5 gap-2 text-xs"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              Open Stripe Dashboard
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Availability Schedule */}
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-        <button
-          onClick={() => setShowAvailability(!showAvailability)}
-          className="w-full flex items-center justify-between"
-        >
-          <div className="flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-gray-400" />
-            <h3 className="text-sm font-semibold text-white">Available Hours</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">
-              {slotDuration} min slots
-            </span>
-            <motion.div
-              animate={{ rotate: showAvailability ? 180 : 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <X className={`w-3.5 h-3.5 text-gray-500 transition-transform ${showAvailability ? '' : 'rotate-45'}`} />
-            </motion.div>
-          </div>
-        </button>
-
-        <AnimatePresence>
-          {showAvailability && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              className="overflow-hidden"
-            >
-              <div className="mt-4 space-y-3">
-                {/* Slot Duration */}
-                <div className="flex items-center gap-3 mb-4">
-                  <Label className="text-gray-400 text-xs whitespace-nowrap">Slot Duration</Label>
-                  <div className="flex items-center gap-1.5">
-                    {[15, 30, 45, 60, 90].map((mins) => (
-                      <button
-                        key={mins}
-                        onClick={() => setSlotDuration(mins)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${slotDuration === mins
-                            ? "bg-white text-black"
-                            : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
-                          }`}
-                      >
-                        {mins}m
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Days */}
-                <div className="space-y-2">
-                  {DAY_KEYS.map((dayKey, i) => {
-                    const dayHours = availableHours[dayKey] || DEFAULT_HOURS[dayKey];
-                    return (
-                      <div
-                        key={dayKey}
-                        className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${dayHours.enabled
-                            ? "border-white/10 bg-white/5"
-                            : "border-white/5 bg-transparent opacity-50"
-                          }`}
-                      >
-                        {/* Toggle */}
-                        <button
-                          onClick={() => toggleDay(dayKey)}
-                          className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${dayHours.enabled ? "bg-white/20" : "bg-white/10"
-                            }`}
-                        >
-                          <motion.div
-                            animate={{ x: dayHours.enabled ? 18 : 2 }}
-                            transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                            className={`absolute top-1 w-4 h-4 rounded-full shadow-md ${dayHours.enabled ? "bg-white" : "bg-gray-500"
-                              }`}
-                          />
-                        </button>
-
-                        {/* Day Name */}
-                        <span className="text-sm text-white font-medium w-24 shrink-0">
-                          {DAY_NAMES[i]}
-                        </span>
-
-                        {/* Time Inputs */}
-                        {dayHours.enabled && (
-                          <div className="flex items-center gap-2 flex-1">
-                            <input
-                              type="time"
-                              value={dayHours.start}
-                              onChange={(e) => updateDayTime(dayKey, "start", e.target.value)}
-                              className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/20 w-[110px]"
-                            />
-                            <span className="text-gray-500 text-xs">to</span>
-                            <input
-                              type="time"
-                              value={dayHours.end}
-                              onChange={(e) => updateDayTime(dayKey, "end", e.target.value)}
-                              className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/20 w-[110px]"
-                            />
-                          </div>
-                        )}
-                        {!dayHours.enabled && (
-                          <span className="text-xs text-gray-600 italic">Closed</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Save Button */}
-                <Button
-                  onClick={handleSaveAvailability}
-                  disabled={savingHours}
-                  className="w-full h-9 rounded-lg bg-white text-black text-xs font-medium hover:bg-gray-200 disabled:opacity-50 mt-2"
-                >
-                  {savingHours ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                  ) : (
-                    <Check className="w-3.5 h-3.5 mr-1.5" />
-                  )}
-                  Save Availability
-                </Button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Services Section */}
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Scissors className="w-4 h-4 text-gray-400" />
-            <h3 className="text-sm font-semibold text-white">Services</h3>
-            <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">
-              {services.length}
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            onClick={() => { setIsAdding(true); setEditingService(newService); }}
-            className="text-gray-400 hover:text-white hover:bg-white/5 gap-1.5 text-xs h-8"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add Service
-          </Button>
-        </div>
-
-        <p className="text-xs text-gray-500 mb-4">
-          Define services your customers can choose from when booking.{" "}
-          {!isStripeConnected && "Connect Stripe above to enable paid services."}
-        </p>
-
-        {/* Service Edit Form */}
-        <AnimatePresence>
-          {editingService && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mb-4 overflow-hidden"
-            >
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <Label className="text-gray-400 text-xs mb-1">Service Name</Label>
-                    <Input
-                      value={editingService.name}
-                      onChange={(e) => setEditingService({ ...editingService, name: e.target.value })}
-                      placeholder="e.g. Haircut, Beard Trim"
-                      className="bg-white/5 border-white/10 text-white text-sm h-9"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <Label className="text-gray-400 text-xs mb-1">Description (optional)</Label>
-                    <Input
-                      value={editingService.description}
-                      onChange={(e) => setEditingService({ ...editingService, description: e.target.value })}
-                      placeholder="Brief description"
-                      className="bg-white/5 border-white/10 text-white text-sm h-9"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-gray-400 text-xs mb-1">Duration (minutes)</Label>
-                    <Input
-                      type="number"
-                      value={editingService.duration_minutes}
-                      onChange={(e) => setEditingService({ ...editingService, duration_minutes: parseInt(e.target.value) || 30 })}
-                      className="bg-white/5 border-white/10 text-white text-sm h-9"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-gray-400 text-xs mb-1">
-                      Price ($) {!isStripeConnected && <span className="text-gray-600">— Connect Stripe first</span>}
-                    </Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={editingService.price}
-                      onChange={(e) => setEditingService({
-                        ...editingService,
-                        price: parseFloat(e.target.value) || 0,
-                        is_paid: parseFloat(e.target.value) > 0,
-                      })}
-                      disabled={!isStripeConnected}
-                      className="bg-white/5 border-white/10 text-white text-sm h-9 disabled:opacity-40"
-                    />
-                  </div>
-                </div>
-
-                {/* Payment toggle for Stripe connected */}
-                {isStripeConnected && (
-                  <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
-                    <button
-                      onClick={() => setEditingService({
-                        ...editingService,
-                        is_paid: !editingService.is_paid,
-                        price: !editingService.is_paid ? (editingService.price || 0) : 0,
-                      })}
-                      className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${editingService.is_paid ? "bg-green-500/30" : "bg-white/10"
-                        }`}
-                    >
-                      <motion.div
-                        animate={{ x: editingService.is_paid ? 18 : 2 }}
-                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                        className={`absolute top-1 w-4 h-4 rounded-full shadow-md ${editingService.is_paid ? "bg-green-400" : "bg-gray-500"
-                          }`}
-                      />
-                    </button>
-                    <div>
-                      <span className="text-xs text-white font-medium">
-                        {editingService.is_paid ? "Paid Service" : "Free Service"}
-                      </span>
-                      <span className="text-[10px] text-gray-500 block">
-                        {editingService.is_paid
-                          ? "Customers pay when they book"
-                          : "No payment required to book"}
-                      </span>
-                    </div>
-                  </div>
+          {!stripeAccountId ? (
+            <div className="space-y-3">
+              <p className="text-xs text-gray-400">
+                Connect Stripe Express to accept payments through your booking
+                page. Your account is shared across all booking links.
+              </p>
+              <Button
+                onClick={handleConnectStripe}
+                disabled={connectingStripe}
+                className="w-full h-10 rounded-lg bg-[#635BFF] hover:bg-[#5349E0] text-white text-sm font-medium"
+              >
+                {connectingStripe ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Zap className="w-4 h-4 mr-2" />
                 )}
-
-                {editingService.price > 0 && editingService.is_paid && isStripeConnected && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
-                    <DollarSign className="w-3.5 h-3.5 text-green-400" />
-                    <span className="text-xs text-green-400">
-                      Customers will pay ${editingService.price.toFixed(2)} when booking this service
-                    </span>
-                  </div>
+                Connect with Stripe
+              </Button>
+            </div>
+          ) : !stripeStatus?.is_enabled ? (
+            <div className="space-y-3">
+              <p className="text-xs text-amber-400">
+                Stripe account created but onboarding is incomplete. Please
+                finish setup to accept payments.
+              </p>
+              <Button
+                onClick={handleConnectStripe}
+                disabled={connectingStripe}
+                className="w-full h-10 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium"
+              >
+                {connectingStripe ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Zap className="w-4 h-4 mr-2" />
                 )}
-
-                <div className="flex items-center gap-2 pt-1">
-                  <Button
-                    onClick={() => handleSaveService(editingService)}
-                    disabled={saving || !editingService.name}
-                    className="h-8 px-4 rounded-lg bg-white text-black text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
-                  >
-                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
-                    {editingService.id ? "Update" : "Add Service"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => { setEditingService(null); setIsAdding(false); }}
-                    className="h-8 text-gray-400 hover:text-white hover:bg-white/5 text-xs"
-                  >
-                    <X className="w-3.5 h-3.5 mr-1" /> Cancel
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Services List */}
-        <div className="space-y-2">
-          {services.length === 0 && !isAdding && (
-            <div className="text-center py-6">
-              <Scissors className="w-8 h-8 mx-auto mb-2 text-gray-600" />
-              <p className="text-xs text-gray-500">No services yet. Add your first service above.</p>
+                Complete Stripe Setup
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-green-400">
+                Stripe is connected and ready to accept payments.
+              </p>
+              <Button
+                variant="ghost"
+                onClick={handleOpenStripeDashboard}
+                className="text-gray-400 hover:text-white hover:bg-white/5 gap-2 text-xs"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open Stripe Dashboard
+              </Button>
             </div>
           )}
-
-          {services.map((service) => (
-            <motion.div
-              key={service.id}
-              layout
-              className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:border-white/10 hover:bg-white/5 transition-all group"
-            >
-              <div className={`w-1 h-10 rounded-full shrink-0 ${service.is_paid && Number(service.price) > 0 ? 'bg-green-500/50' : 'bg-teal-500/50'}`} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-white font-medium truncate">{service.name}</span>
-                  {service.is_paid && Number(service.price) > 0 ? (
-                    <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full border border-green-500/30 flex items-center gap-0.5">
-                      <DollarSign className="w-2.5 h-2.5" />
-                      {Number(service.price).toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] bg-white/10 text-gray-400 px-1.5 py-0.5 rounded-full">
-                      Free
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-gray-500 flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {service.duration_minutes} min
-                  </span>
-                  {service.description && (
-                    <span className="text-xs text-gray-600 truncate">{service.description}</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => setEditingService({ ...service, business_profile_id: businessProfileId })}
-                  className="p-1.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => service.id && handleDeleteService(service.id)}
-                  disabled={deletingId === service.id}
-                  className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors disabled:opacity-50"
-                >
-                  {deletingId === service.id ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          ))}
         </div>
+
+        {/* Availability Schedule */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+          <button
+            onClick={() => setShowAvailability(!showAvailability)}
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-semibold text-white">
+                Available Hours
+              </h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">
+                {slotDuration} min slots
+              </span>
+              <motion.div
+                animate={{ rotate: showAvailability ? 180 : 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <X
+                  className={`w-3.5 h-3.5 text-gray-500 transition-transform ${showAvailability ? "" : "rotate-45"}`}
+                />
+              </motion.div>
+            </div>
+          </button>
+
+          <AnimatePresence>
+            {showAvailability && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-4 space-y-3">
+                  {/* Slot Duration */}
+                  <div className="flex items-center gap-3 mb-4">
+                    <Label className="text-gray-400 text-xs whitespace-nowrap">
+                      Slot Duration
+                    </Label>
+                    <div className="flex items-center gap-1.5">
+                      {[15, 30, 45, 60, 90].map((mins) => (
+                        <button
+                          key={mins}
+                          onClick={() => setSlotDuration(mins)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                            slotDuration === mins
+                              ? "bg-white text-black"
+                              : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
+                          }`}
+                        >
+                          {mins}m
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Days */}
+                  <div className="space-y-2">
+                    {DAY_KEYS.map((dayKey, i) => {
+                      const dayHours =
+                        availableHours[dayKey] || DEFAULT_HOURS[dayKey];
+                      return (
+                        <div
+                          key={dayKey}
+                          className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
+                            dayHours.enabled
+                              ? "border-white/10 bg-white/5"
+                              : "border-white/5 bg-transparent opacity-50"
+                          }`}
+                        >
+                          {/* Toggle */}
+                          <button
+                            onClick={() => toggleDay(dayKey)}
+                            className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${
+                              dayHours.enabled ? "bg-white/20" : "bg-white/10"
+                            }`}
+                          >
+                            <motion.div
+                              animate={{ x: dayHours.enabled ? 18 : 2 }}
+                              transition={{
+                                type: "spring",
+                                stiffness: 500,
+                                damping: 30,
+                              }}
+                              className={`absolute top-1 w-4 h-4 rounded-full shadow-md ${
+                                dayHours.enabled ? "bg-white" : "bg-gray-500"
+                              }`}
+                            />
+                          </button>
+
+                          {/* Day Name */}
+                          <span className="text-sm text-white font-medium w-24 shrink-0">
+                            {DAY_NAMES[i]}
+                          </span>
+
+                          {/* Time Inputs */}
+                          {dayHours.enabled && (
+                            <div className="flex items-center gap-2 flex-1">
+                              <input
+                                type="time"
+                                value={dayHours.start}
+                                onChange={(e) =>
+                                  updateDayTime(dayKey, "start", e.target.value)
+                                }
+                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/20 w-[110px]"
+                              />
+                              <span className="text-gray-500 text-xs">to</span>
+                              <input
+                                type="time"
+                                value={dayHours.end}
+                                onChange={(e) =>
+                                  updateDayTime(dayKey, "end", e.target.value)
+                                }
+                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/20 w-[110px]"
+                              />
+                            </div>
+                          )}
+                          {!dayHours.enabled && (
+                            <span className="text-xs text-gray-600 italic">
+                              Closed
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Save Button */}
+                  <Button
+                    onClick={handleSaveAvailability}
+                    disabled={savingHours}
+                    className="w-full h-9 rounded-lg bg-white text-black text-xs font-medium hover:bg-gray-200 disabled:opacity-50 mt-2"
+                  >
+                    {savingHours ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5 mr-1.5" />
+                    )}
+                    Save Availability
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Services Section */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Scissors className="w-4 h-4 text-gray-400" />
+              <h3 className="text-sm font-semibold text-white">Services</h3>
+              <span className="text-[10px] bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">
+                {services.length}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setIsAdding(true);
+                setEditingService(newService);
+              }}
+              className="text-gray-400 hover:text-white hover:bg-white/5 gap-1.5 text-xs h-8"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Service
+            </Button>
+          </div>
+
+          <p className="text-xs text-gray-500 mb-4">
+            Define services your customers can choose from when booking.{" "}
+            {!isStripeConnected &&
+              "Connect Stripe above to enable paid services."}
+          </p>
+
+          {/* Service Edit Form */}
+          <AnimatePresence>
+            {editingService && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mb-4 overflow-hidden"
+              >
+                <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <Label className="text-gray-400 text-xs mb-1">
+                        Service Name
+                      </Label>
+                      <Input
+                        value={editingService.name}
+                        onChange={(e) =>
+                          setEditingService({
+                            ...editingService,
+                            name: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. Haircut, Beard Trim"
+                        className="bg-white/5 border-white/10 text-white text-sm h-9"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-gray-400 text-xs mb-1">
+                        Description (optional)
+                      </Label>
+                      <Input
+                        value={editingService.description}
+                        onChange={(e) =>
+                          setEditingService({
+                            ...editingService,
+                            description: e.target.value,
+                          })
+                        }
+                        placeholder="Brief description"
+                        className="bg-white/5 border-white/10 text-white text-sm h-9"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-gray-400 text-xs mb-1">
+                        Duration (minutes)
+                      </Label>
+                      <Input
+                        type="number"
+                        value={editingService.duration_minutes}
+                        onChange={(e) =>
+                          setEditingService({
+                            ...editingService,
+                            duration_minutes: parseInt(e.target.value) || 30,
+                          })
+                        }
+                        className="bg-white/5 border-white/10 text-white text-sm h-9"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-gray-400 text-xs mb-1">
+                        Price ($){" "}
+                        {!isStripeConnected &&
+                          editingService.payment_mode !== "free" && (
+                            <span className="text-gray-600">
+                              — Connect Stripe first
+                            </span>
+                          )}
+                      </Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={editingService.price}
+                        onChange={(e) =>
+                          setEditingService({
+                            ...editingService,
+                            price: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        disabled={
+                          editingService.payment_mode === "free" ||
+                          !isStripeConnected
+                        }
+                        className="bg-white/5 border-white/10 text-white text-sm h-9 disabled:opacity-40"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Payment Method: Free / Pay Online / Pay In Store */}
+                  {isStripeConnected && (
+                    <div className="space-y-2">
+                      <Label className="text-gray-400 text-xs">
+                        Payment Method
+                      </Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          {
+                            mode: "free" as const,
+                            label: "Free",
+                            desc: "No payment",
+                            icon: Scissors,
+                          },
+                          {
+                            mode: "online" as const,
+                            label: "Pay Online",
+                            desc: "Pay when booking",
+                            icon: CreditCard,
+                          },
+                          {
+                            mode: "in_store" as const,
+                            label: "Pay In Store",
+                            desc: "Pay at location",
+                            icon: Store,
+                          },
+                        ].map((option) => {
+                          const isSelected =
+                            (editingService.payment_mode ?? "free") ===
+                            option.mode;
+                          return (
+                            <button
+                              key={option.mode}
+                              type="button"
+                              onClick={() =>
+                                setEditingService({
+                                  ...editingService,
+                                  payment_mode: option.mode,
+                                  is_paid: option.mode !== "free",
+                                  price:
+                                    option.mode === "free"
+                                      ? 0
+                                      : editingService.price,
+                                })
+                              }
+                              className={`relative rounded-xl p-3 border transition-all text-center ${
+                                isSelected
+                                  ? "border-white/40 bg-white/10 ring-1 ring-white/20"
+                                  : "border-white/10 bg-white/5 hover:border-white/20"
+                              }`}
+                            >
+                              <option.icon
+                                className={`w-4 h-4 mx-auto mb-1 ${isSelected ? "text-white" : "text-gray-500"}`}
+                              />
+                              <span
+                                className={`text-xs font-medium block ${isSelected ? "text-white" : "text-gray-400"}`}
+                              >
+                                {option.label}
+                              </span>
+                              <span className="text-[10px] text-gray-600 block">
+                                {option.desc}
+                              </span>
+                              {isSelected && (
+                                <motion.div
+                                  initial={{ scale: 0 }}
+                                  animate={{ scale: 1 }}
+                                  className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center"
+                                >
+                                  <Check className="w-2.5 h-2.5 text-black" />
+                                </motion.div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {editingService.payment_mode === "online" &&
+                    editingService.price > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                        <DollarSign className="w-3.5 h-3.5 text-green-400" />
+                        <span className="text-xs text-green-400">
+                          Customers pay ${editingService.price.toFixed(2)}{" "}
+                          online when booking
+                        </span>
+                      </div>
+                    )}
+
+                  {editingService.payment_mode === "in_store" &&
+                    editingService.price > 0 && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                        <Store className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="text-xs text-amber-400">
+                          Customers pay ${editingService.price.toFixed(2)} at
+                          your location
+                        </span>
+                      </div>
+                    )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      onClick={() => handleSaveService(editingService)}
+                      disabled={saving || !editingService.name}
+                      className="h-8 px-4 rounded-lg bg-white text-black text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      {saving ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5 mr-1.5" />
+                      )}
+                      {editingService.id ? "Update" : "Add Service"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingService(null);
+                        setIsAdding(false);
+                      }}
+                      className="h-8 text-gray-400 hover:text-white hover:bg-white/5 text-xs"
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" /> Cancel
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Services List */}
+          <div className="space-y-2">
+            {services.length === 0 && !isAdding && (
+              <div className="text-center py-6">
+                <Scissors className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                <p className="text-xs text-gray-500">
+                  No services yet. Add your first service above.
+                </p>
+              </div>
+            )}
+
+            {services.map((service) => (
+              <motion.div
+                key={service.id}
+                layout
+                className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:border-white/10 hover:bg-white/5 transition-all group"
+              >
+                <div
+                  className={`w-1 h-10 rounded-full shrink-0 ${(service.payment_mode ?? "free") === "online" ? "bg-green-500/50" : service.payment_mode === "in_store" ? "bg-amber-500/50" : "bg-teal-500/50"}`}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-white font-medium truncate">
+                      {service.name}
+                    </span>
+                    {(service.payment_mode ?? "free") === "free" ? (
+                      <span className="text-[10px] bg-white/10 text-gray-400 px-1.5 py-0.5 rounded-full">
+                        Free
+                      </span>
+                    ) : service.payment_mode === "in_store" ? (
+                      <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-0.5">
+                        <Store className="w-2.5 h-2.5" />$
+                        {Number(service.price || 0).toFixed(2)} in store
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full border border-green-500/30 flex items-center gap-0.5">
+                        <DollarSign className="w-2.5 h-2.5" />$
+                        {Number(service.price || 0).toFixed(2)} online
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs text-gray-500 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> {service.duration_minutes}{" "}
+                      min
+                    </span>
+                    {service.description && (
+                      <span className="text-xs text-gray-600 truncate">
+                        {service.description}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() =>
+                      setEditingService({
+                        ...service,
+                        business_profile_id: businessProfileId,
+                      })
+                    }
+                    className="p-1.5 rounded-md hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() =>
+                      service.id && handleDeleteService(service.id)
+                    }
+                    disabled={deletingId === service.id}
+                    className="p-1.5 rounded-md hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors disabled:opacity-50"
+                  >
+                    {deletingId === service.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        {/* Delete Service Confirmation Dialog */}
+        <AlertDialog
+          open={deleteServiceDialogOpen}
+          onOpenChange={setDeleteServiceDialogOpen}
+        >
+          <AlertDialogContent className="bg-[#111] border border-white/10 rounded-xl shadow-2xl max-w-md">
+            <AlertDialogHeader>
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                </div>
+                <AlertDialogTitle className="text-white text-lg font-bold tracking-tight">
+                  Delete Service
+                </AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="text-gray-400 text-sm leading-relaxed">
+                Are you sure you want to delete this service? This cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-2 sm:gap-2">
+              <AlertDialogCancel className="bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:text-white rounded-lg">
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteService}
+                className="bg-red-500 hover:bg-red-600 text-white border-0 rounded-lg"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-    </div>
+    </>
   );
 }

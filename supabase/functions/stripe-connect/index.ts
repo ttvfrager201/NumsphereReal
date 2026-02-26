@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_KEY") ?? ""
+      Deno.env.get("SERVICE_KEY") ?? ""
     );
 
     const { action, ...params } = await req.json();
@@ -29,14 +29,23 @@ Deno.serve(async (req) => {
     if (action === "create-connect-account") {
       const { business_profile_id, user_id, return_url } = params;
 
-      // Check the current profile
+      // First, check if the user already has a Stripe account on ANY profile
+      const { data: existingProfiles } = await supabaseClient
+        .from("business_profiles")
+        .select("stripe_account_id, business_name, email")
+        .eq("user_id", user_id)
+        .not("stripe_account_id", "is", null)
+        .limit(1);
+
+      // Also check the current profile
       const { data: profile } = await supabaseClient
         .from("business_profiles")
         .select("stripe_account_id, business_name, email")
         .eq("id", business_profile_id)
         .single();
 
-      let accountId = profile?.stripe_account_id;
+      // Use existing Stripe account from any profile, or the current one
+      let accountId = profile?.stripe_account_id || existingProfiles?.[0]?.stripe_account_id;
 
       if (!accountId) {
         // Create a new Stripe Express account
@@ -82,7 +91,29 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Action: create-payment-intent (for Payment Elements)
+    // Action: check-account-status
+    if (action === "check-account-status") {
+      const { stripe_account_id } = params;
+
+      const account = await stripe.accounts.retrieve(stripe_account_id);
+      const isEnabled =
+        account.charges_enabled && account.payouts_enabled;
+
+      return new Response(
+        JSON.stringify({
+          charges_enabled: account.charges_enabled,
+          payouts_enabled: account.payouts_enabled,
+          details_submitted: account.details_submitted,
+          is_enabled: isEnabled,
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
+
+    // Action: create-payment-intent (for Payment Elements on the booking page)
     if (action === "create-payment-intent") {
       const {
         business_profile_id,
@@ -109,6 +140,7 @@ Deno.serve(async (req) => {
         );
       }
 
+      // Application fee (5%)
       const applicationFee = Math.round(price_cents * 0.05);
 
       const paymentIntent = await stripe.paymentIntents.create({
@@ -120,13 +152,14 @@ Deno.serve(async (req) => {
         transfer_data: {
           destination: profile.stripe_account_id,
         },
+        payment_method_types: ["card", "google_pay", "apple_pay"],
         metadata: {
           booking_id,
           business_profile_id,
         },
       });
 
-      // Update booking with payment intent ID
+      // Store the PI ID on the booking and mark as pending
       if (booking_id) {
         await supabaseClient
           .from("bookings")
@@ -140,7 +173,7 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           client_secret: paymentIntent.client_secret,
-          id: paymentIntent.id
+          id: paymentIntent.id,
         }),
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -149,7 +182,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Action: create-checkout-session (Legacy/Fallback)
+    // Action: create-checkout-session (legacy / subscription / other flows)
     if (action === "create-checkout-session") {
       const {
         business_profile_id,
@@ -241,7 +274,7 @@ Deno.serve(async (req) => {
       const { session_id } = params;
 
       const session = await stripe.checkout.sessions.retrieve(session_id);
-
+      
       if (session.payment_status === "paid") {
         // Update the booking
         const bookingId = session.metadata?.booking_id;
