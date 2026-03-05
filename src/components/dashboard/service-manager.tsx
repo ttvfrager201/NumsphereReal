@@ -488,11 +488,10 @@ export function ServiceManager({
                         <button
                           key={mins}
                           onClick={() => setSlotDuration(mins)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                            slotDuration === mins
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${slotDuration === mins
                               ? "bg-white text-black"
                               : "bg-white/5 text-gray-400 hover:bg-white/10 border border-white/10"
-                          }`}
+                            }`}
                         >
                           {mins}m
                         </button>
@@ -508,18 +507,16 @@ export function ServiceManager({
                       return (
                         <div
                           key={dayKey}
-                          className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
-                            dayHours.enabled
+                          className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${dayHours.enabled
                               ? "border-white/10 bg-white/5"
                               : "border-white/5 bg-transparent opacity-50"
-                          }`}
+                            }`}
                         >
                           {/* Toggle */}
                           <button
                             onClick={() => toggleDay(dayKey)}
-                            className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${
-                              dayHours.enabled ? "bg-white/20" : "bg-white/10"
-                            }`}
+                            className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${dayHours.enabled ? "bg-white/20" : "bg-white/10"
+                              }`}
                           >
                             <motion.div
                               animate={{ x: dayHours.enabled ? 18 : 2 }}
@@ -528,9 +525,8 @@ export function ServiceManager({
                                 stiffness: 500,
                                 damping: 30,
                               }}
-                              className={`absolute top-1 w-4 h-4 rounded-full shadow-md ${
-                                dayHours.enabled ? "bg-white" : "bg-gray-500"
-                              }`}
+                              className={`absolute top-1 w-4 h-4 rounded-full shadow-md ${dayHours.enabled ? "bg-white" : "bg-gray-500"
+                                }`}
                             />
                           </button>
 
@@ -751,11 +747,10 @@ export function ServiceManager({
                                       : editingService.price,
                                 })
                               }
-                              className={`relative rounded-xl p-3 border transition-all text-center ${
-                                isSelected
+                              className={`relative rounded-xl p-3 border transition-all text-center ${isSelected
                                   ? "border-white/40 bg-white/10 ring-1 ring-white/20"
                                   : "border-white/10 bg-white/5 hover:border-white/20"
-                              }`}
+                                }`}
                             >
                               <option.icon
                                 className={`w-4 h-4 mx-auto mb-1 ${isSelected ? "text-white" : "text-gray-500"}`}

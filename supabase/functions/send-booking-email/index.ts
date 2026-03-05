@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SERVICE_KEY")!,
+      Deno.env.get("SUPABASE_SERVICE_KEY")!,
     );
 
     const { booking_id, type } = (await req.json()) as BookingEmailRequest;

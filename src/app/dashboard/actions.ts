@@ -164,6 +164,13 @@ export async function saveBusinessProfile(profile: {
 
     if (error) throw new Error(error.message);
   } else {
+    // Fetch the user-level Stripe account ID so new profiles inherit it
+    const { data: userData } = await supabase
+      .from("users")
+      .select("stripe_account_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
     // Insert new profile
     const { error } = await supabase
       .from("business_profiles")
@@ -181,6 +188,8 @@ export async function saveBusinessProfile(profile: {
         payments_enabled: profile.payments_enabled,
         available_hours: profile.available_hours,
         slot_duration: profile.slot_duration,
+        // Inherit the user's existing Stripe account if they have one
+        stripe_account_id: userData?.stripe_account_id || null,
       });
 
     if (error) throw new Error(error.message);
@@ -449,6 +458,13 @@ export async function updateBusinessProfileStripe(profileId: string, stripeAccou
     .eq("user_id", user.id);
 
   if (error) throw new Error(error.message);
+
+  // Also persist Stripe account at user level so it survives booking link deletions
+  await supabase
+    .from("users")
+    .update({ stripe_account_id: stripeAccountId })
+    .eq("user_id", user.id);
+
   revalidatePath("/dashboard");
 }
 
@@ -476,20 +492,35 @@ export async function syncStripeAcrossProfiles() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  const { data: profileWithStripe } = await supabase
-    .from("business_profiles")
+  // First check user-level Stripe account (survives all booking link deletions)
+  const { data: userData } = await supabase
+    .from("users")
     .select("stripe_account_id")
     .eq("user_id", user.id)
-    .not("stripe_account_id", "is", null)
-    .limit(1)
-    .single();
+    .maybeSingle();
 
-  if (!profileWithStripe?.stripe_account_id) return null;
+  let stripeAccountId = userData?.stripe_account_id;
 
+  // Fallback: check any existing business profile
+  if (!stripeAccountId) {
+    const { data: profileWithStripe } = await supabase
+      .from("business_profiles")
+      .select("stripe_account_id")
+      .eq("user_id", user.id)
+      .not("stripe_account_id", "is", null)
+      .limit(1)
+      .single();
+
+    stripeAccountId = profileWithStripe?.stripe_account_id;
+  }
+
+  if (!stripeAccountId) return null;
+
+  // Sync to all business profiles that don't have it yet
   await supabase
     .from("business_profiles")
     .update({
-      stripe_account_id: profileWithStripe.stripe_account_id,
+      stripe_account_id: stripeAccountId,
       payments_enabled: true,
       updated_at: new Date().toISOString(),
     })
@@ -497,7 +528,7 @@ export async function syncStripeAcrossProfiles() {
     .is("stripe_account_id", null);
 
   revalidatePath("/dashboard");
-  return profileWithStripe.stripe_account_id;
+  return stripeAccountId;
 }
 
 export async function getUserStripeAccountId(): Promise<string | null> {
@@ -505,7 +536,17 @@ export async function getUserStripeAccountId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data } = await supabase
+  // First try user-level storage (persists even if all booking links are deleted)
+  const { data: userData } = await supabase
+    .from("users")
+    .select("stripe_account_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (userData?.stripe_account_id) return userData.stripe_account_id;
+
+  // Fallback: check business profiles (legacy / backfill path)
+  const { data: profileData } = await supabase
     .from("business_profiles")
     .select("stripe_account_id")
     .eq("user_id", user.id)
@@ -513,5 +554,5 @@ export async function getUserStripeAccountId(): Promise<string | null> {
     .limit(1)
     .maybeSingle();
 
-  return data?.stripe_account_id || null;
+  return profileData?.stripe_account_id || null;
 }

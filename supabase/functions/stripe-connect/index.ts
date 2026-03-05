@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SERVICE_KEY") ?? ""
+      Deno.env.get("SUPABASE_SERVICE_KEY") ?? ""
     );
 
     const { action, ...params } = await req.json();
@@ -73,6 +73,12 @@ Deno.serve(async (req) => {
         .from("business_profiles")
         .update({ stripe_account_id: accountId })
         .eq("id", business_profile_id);
+
+      // Also persist at the user level so it survives booking link deletions
+      await supabaseClient
+        .from("users")
+        .update({ stripe_account_id: accountId })
+        .eq("user_id", user_id);
 
       // Create an account link for onboarding (or re-onboarding)
       const accountLink = await stripe.accountLinks.create({
@@ -274,7 +280,7 @@ Deno.serve(async (req) => {
       const { session_id } = params;
 
       const session = await stripe.checkout.sessions.retrieve(session_id);
-      
+
       if (session.payment_status === "paid") {
         // Update the booking
         const bookingId = session.metadata?.booking_id;

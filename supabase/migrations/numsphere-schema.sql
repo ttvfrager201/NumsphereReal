@@ -43,38 +43,49 @@ ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
 -- Policies for missed_calls
+DROP POLICY IF EXISTS "Users can view own missed calls" ON public.missed_calls;
 CREATE POLICY "Users can view own missed calls" ON public.missed_calls
     FOR SELECT USING (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own missed calls" ON public.missed_calls;
 CREATE POLICY "Users can insert own missed calls" ON public.missed_calls
     FOR INSERT WITH CHECK (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can update own missed calls" ON public.missed_calls;
 CREATE POLICY "Users can update own missed calls" ON public.missed_calls
     FOR UPDATE USING (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own missed calls" ON public.missed_calls;
 CREATE POLICY "Users can delete own missed calls" ON public.missed_calls
     FOR DELETE USING (auth.uid()::text = user_id);
 
 -- Policies for bookings
+DROP POLICY IF EXISTS "Users can view own bookings" ON public.bookings;
 CREATE POLICY "Users can view own bookings" ON public.bookings
     FOR SELECT USING (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own bookings" ON public.bookings;
 CREATE POLICY "Users can insert own bookings" ON public.bookings
     FOR INSERT WITH CHECK (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can update own bookings" ON public.bookings;
 CREATE POLICY "Users can update own bookings" ON public.bookings
     FOR UPDATE USING (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own bookings" ON public.bookings;
 CREATE POLICY "Users can delete own bookings" ON public.bookings
     FOR DELETE USING (auth.uid()::text = user_id);
 
 -- Policies for settings
+DROP POLICY IF EXISTS "Users can view own settings" ON public.settings;
 CREATE POLICY "Users can view own settings" ON public.settings
     FOR SELECT USING (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own settings" ON public.settings;
 CREATE POLICY "Users can insert own settings" ON public.settings
     FOR INSERT WITH CHECK (auth.uid()::text = user_id);
 
+DROP POLICY IF EXISTS "Users can update own settings" ON public.settings;
 CREATE POLICY "Users can update own settings" ON public.settings
     FOR UPDATE USING (auth.uid()::text = user_id);
 

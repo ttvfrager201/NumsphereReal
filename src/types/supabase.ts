@@ -163,6 +163,53 @@ export type Database = {
           },
         ]
       }
+      call_forwarding_configs: {
+        Row: {
+          booking_slug: string | null
+          created_at: string
+          forward_to_number: string
+          id: string
+          is_active: boolean | null
+          sms_message_template: string | null
+          twilio_number: string | null
+          twilio_number_sid: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          booking_slug?: string | null
+          created_at?: string
+          forward_to_number: string
+          id?: string
+          is_active?: boolean | null
+          sms_message_template?: string | null
+          twilio_number?: string | null
+          twilio_number_sid?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          booking_slug?: string | null
+          created_at?: string
+          forward_to_number?: string
+          id?: string
+          is_active?: boolean | null
+          sms_message_template?: string | null
+          twilio_number?: string | null
+          twilio_number_sid?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_forwarding_configs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       missed_calls: {
         Row: {
           called_at: string
@@ -214,6 +261,7 @@ export type Database = {
           is_active: boolean | null
           is_paid: boolean | null
           name: string
+          payment_mode: string | null
           price: number
           sort_order: number | null
           updated_at: string
@@ -228,6 +276,7 @@ export type Database = {
           is_active?: boolean | null
           is_paid?: boolean | null
           name: string
+          payment_mode?: string | null
           price?: number
           sort_order?: number | null
           updated_at?: string
@@ -242,6 +291,7 @@ export type Database = {
           is_active?: boolean | null
           is_paid?: boolean | null
           name?: string
+          payment_mode?: string | null
           price?: number
           sort_order?: number | null
           updated_at?: string
@@ -260,28 +310,46 @@ export type Database = {
       settings: {
         Row: {
           booking_link_template: string | null
+          booking_slug: string | null
+          call_forwarding_enabled: boolean | null
           created_at: string
+          forward_to_number: string | null
           id: string
           review_automation_enabled: boolean | null
+          sms_message_template: string | null
           stripe_connect_id: string | null
+          twilio_number: string | null
+          twilio_number_sid: string | null
           updated_at: string
           user_id: string | null
         }
         Insert: {
           booking_link_template?: string | null
+          booking_slug?: string | null
+          call_forwarding_enabled?: boolean | null
           created_at?: string
+          forward_to_number?: string | null
           id?: string
           review_automation_enabled?: boolean | null
+          sms_message_template?: string | null
           stripe_connect_id?: string | null
+          twilio_number?: string | null
+          twilio_number_sid?: string | null
           updated_at?: string
           user_id?: string | null
         }
         Update: {
           booking_link_template?: string | null
+          booking_slug?: string | null
+          call_forwarding_enabled?: boolean | null
           created_at?: string
+          forward_to_number?: string | null
           id?: string
           review_automation_enabled?: boolean | null
+          sms_message_template?: string | null
           stripe_connect_id?: string | null
+          twilio_number?: string | null
+          twilio_number_sid?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -391,6 +459,7 @@ export type Database = {
           id: string
           image: string | null
           name: string | null
+          stripe_account_id: string | null
           subscription: string | null
           token_identifier: string
           updated_at: string | null
@@ -405,6 +474,7 @@ export type Database = {
           id: string
           image?: string | null
           name?: string | null
+          stripe_account_id?: string | null
           subscription?: string | null
           token_identifier: string
           updated_at?: string | null
@@ -419,6 +489,7 @@ export type Database = {
           id?: string
           image?: string | null
           name?: string | null
+          stripe_account_id?: string | null
           subscription?: string | null
           token_identifier?: string
           updated_at?: string | null

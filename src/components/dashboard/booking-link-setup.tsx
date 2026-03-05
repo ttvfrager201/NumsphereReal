@@ -55,6 +55,7 @@ import {
   deleteService,
   updateBusinessProfileStripe,
   saveBusinessProfile,
+  getUserStripeAccountId,
 } from "@/app/dashboard/actions";
 import { toast } from "sonner";
 import { BookingLinksList } from "./booking-links-list";
@@ -174,15 +175,19 @@ export function BookingLinkSetup() {
   useEffect(() => {
     const loadProfiles = async () => {
       try {
-        const profiles = await getAllBusinessProfiles();
+        const [profiles, existingStripeAccountId] = await Promise.all([
+          getAllBusinessProfiles(),
+          getUserStripeAccountId(),
+        ]);
+
+        // Restore user-level Stripe connection regardless of how many profiles exist
+        if (existingStripeAccountId) {
+          setStripeAccountId(existingStripeAccountId);
+          setStripeConnected(true);
+        }
+
         if (profiles && profiles.length > 0) {
           setStep("list");
-          // Check if user already has a Stripe account on any profile
-          const withStripe = profiles.find((p: any) => p.stripe_account_id);
-          if (withStripe) {
-            setStripeAccountId(withStripe.stripe_account_id);
-            setStripeConnected(true);
-          }
         } else {
           setStep("ready");
         }
@@ -210,7 +215,7 @@ export function BookingLinkSetup() {
       business_name: value,
       booking_slug:
         prev.booking_slug === generateSlug(prev.business_name) ||
-        !prev.booking_slug
+          !prev.booking_slug
           ? generateSlug(value)
           : prev.booking_slug,
     }));
@@ -418,22 +423,20 @@ export function BookingLinkSetup() {
                   <button
                     key={label}
                     onClick={() => goToStep(STEPS[idx + 2])}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                      isCurrent
-                        ? "bg-white text-black"
-                        : isActive
-                          ? "bg-white/20 text-white"
-                          : "bg-white/5 text-gray-500"
-                    }`}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${isCurrent
+                      ? "bg-white text-black"
+                      : isActive
+                        ? "bg-white/20 text-white"
+                        : "bg-white/5 text-gray-500"
+                      }`}
                   >
                     <span
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                        isCurrent
-                          ? "bg-black text-white"
-                          : isActive
-                            ? "bg-white/20 text-white"
-                            : "bg-white/10 text-gray-500"
-                      }`}
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${isCurrent
+                        ? "bg-black text-white"
+                        : isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-white/10 text-gray-500"
+                        }`}
                     >
                       {isActive && currentFormStep > idx + 2 ? (
                         <Check className="w-3 h-3" />
@@ -914,11 +917,10 @@ export function BookingLinkSetup() {
                               dark_mode: preset.dark,
                             }))
                           }
-                          className={`relative rounded-xl p-3 border transition-all text-center ${
-                            isSelected
-                              ? "border-white/40 bg-white/10 ring-1 ring-white/20"
-                              : "border-white/10 bg-white/5 hover:border-white/20"
-                          }`}
+                          className={`relative rounded-xl p-3 border transition-all text-center ${isSelected
+                            ? "border-white/40 bg-white/10 ring-1 ring-white/20"
+                            : "border-white/10 bg-white/5 hover:border-white/20"
+                            }`}
                         >
                           <div className="flex items-center justify-center gap-1.5 mb-1.5">
                             <div
@@ -1033,9 +1035,8 @@ export function BookingLinkSetup() {
                         dark_mode: !prev.dark_mode,
                       }))
                     }
-                    className={`relative w-12 h-7 rounded-full transition-colors ${
-                      formData.dark_mode ? "bg-white/20" : "bg-white/40"
-                    }`}
+                    className={`relative w-12 h-7 rounded-full transition-colors ${formData.dark_mode ? "bg-white/20" : "bg-white/40"
+                      }`}
                   >
                     <motion.div
                       animate={{ x: formData.dark_mode ? 22 : 2 }}
@@ -1226,9 +1227,8 @@ export function BookingLinkSetup() {
                 </div>
                 <button
                   onClick={() => setWantsPayments(!wantsPayments)}
-                  className={`relative w-12 h-7 rounded-full transition-colors ${
-                    wantsPayments ? "bg-[#635BFF]/40" : "bg-white/10"
-                  }`}
+                  className={`relative w-12 h-7 rounded-full transition-colors ${wantsPayments ? "bg-[#635BFF]/40" : "bg-white/10"
+                    }`}
                 >
                   <motion.div
                     animate={{ x: wantsPayments ? 22 : 2 }}
@@ -1237,9 +1237,8 @@ export function BookingLinkSetup() {
                       stiffness: 500,
                       damping: 30,
                     }}
-                    className={`absolute top-1 w-5 h-5 rounded-full shadow-md ${
-                      wantsPayments ? "bg-[#635BFF]" : "bg-gray-500"
-                    }`}
+                    className={`absolute top-1 w-5 h-5 rounded-full shadow-md ${wantsPayments ? "bg-[#635BFF]" : "bg-gray-500"
+                      }`}
                   />
                 </button>
               </div>
@@ -1506,21 +1505,18 @@ export function BookingLinkSetup() {
                                                   : editingService.price,
                                             })
                                           }
-                                          className={`relative rounded-xl p-3 border transition-all text-center ${
-                                            isSelected
-                                              ? "border-white/40 bg-white/10 ring-1 ring-white/20"
-                                              : "border-white/10 bg-white/5 hover:border-white/20"
-                                          }`}
+                                          className={`relative rounded-xl p-3 border transition-all text-center ${isSelected
+                                            ? "border-white/40 bg-white/10 ring-1 ring-white/20"
+                                            : "border-white/10 bg-white/5 hover:border-white/20"
+                                            }`}
                                         >
                                           <option.icon
-                                            className={`w-4 h-4 mx-auto mb-1 ${
-                                              isSelected ? "text-white" : "text-gray-500"
-                                            }`}
+                                            className={`w-4 h-4 mx-auto mb-1 ${isSelected ? "text-white" : "text-gray-500"
+                                              }`}
                                           />
                                           <span
-                                            className={`text-xs font-medium block ${
-                                              isSelected ? "text-white" : "text-gray-400"
-                                            }`}
+                                            className={`text-xs font-medium block ${isSelected ? "text-white" : "text-gray-400"
+                                              }`}
                                           >
                                             {option.label}
                                           </span>
@@ -1676,11 +1672,10 @@ export function BookingLinkSetup() {
                               className="flex items-center gap-3 p-3 rounded-lg border border-white/5 hover:border-white/10 hover:bg-white/5 transition-all group"
                             >
                               <div
-                                className={`w-1 h-10 rounded-full shrink-0 ${
-                                  service.is_paid && Number(service.price) > 0
-                                    ? "bg-green-500/50"
-                                    : "bg-teal-500/50"
-                                }`}
+                                className={`w-1 h-10 rounded-full shrink-0 ${service.is_paid && Number(service.price) > 0
+                                  ? "bg-green-500/50"
+                                  : "bg-teal-500/50"
+                                  }`}
                               />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
