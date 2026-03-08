@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_KEY") ?? ""
+      Deno.env.get("SERVICE_KEY") ?? "",
     );
 
     const { action, ...params } = await req.json();
@@ -45,7 +45,8 @@ Deno.serve(async (req) => {
         .single();
 
       // Use existing Stripe account from any profile, or the current one
-      let accountId = profile?.stripe_account_id || existingProfiles?.[0]?.stripe_account_id;
+      let accountId =
+        profile?.stripe_account_id || existingProfiles?.[0]?.stripe_account_id;
 
       if (!accountId) {
         // Create a new Stripe Express account
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
@@ -102,8 +103,7 @@ Deno.serve(async (req) => {
       const { stripe_account_id } = params;
 
       const account = await stripe.accounts.retrieve(stripe_account_id);
-      const isEnabled =
-        account.charges_enabled && account.payouts_enabled;
+      const isEnabled = account.charges_enabled && account.payouts_enabled;
 
       return new Response(
         JSON.stringify({
@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
@@ -142,7 +142,7 @@ Deno.serve(async (req) => {
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 400,
-          }
+          },
         );
       }
 
@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
         transfer_data: {
           destination: profile.stripe_account_id,
         },
-        payment_method_types: ["card", "google_pay", "apple_pay"],
+        payment_method_types: ["card"],
         metadata: {
           booking_id,
           business_profile_id,
@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 400,
-          }
+          },
         );
       }
 
@@ -271,7 +271,7 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
@@ -304,7 +304,7 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
@@ -312,17 +312,13 @@ Deno.serve(async (req) => {
     if (action === "create-login-link") {
       const { stripe_account_id } = params;
 
-      const loginLink = await stripe.accounts.createLoginLink(
-        stripe_account_id
-      );
+      const loginLink =
+        await stripe.accounts.createLoginLink(stripe_account_id);
 
-      return new Response(
-        JSON.stringify({ url: loginLink.url }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-          status: 200,
-        }
-      );
+      return new Response(JSON.stringify({ url: loginLink.url }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
     }
 
     // Action: get-balance (get the connected account balance)
@@ -333,10 +329,7 @@ Deno.serve(async (req) => {
         stripeAccount: stripe_account_id,
       });
 
-      const available = balance.available.reduce(
-        (sum, b) => sum + b.amount,
-        0
-      );
+      const available = balance.available.reduce((sum, b) => sum + b.amount, 0);
       const pending = balance.pending.reduce((sum, b) => sum + b.amount, 0);
 
       return new Response(
@@ -348,25 +341,19 @@ Deno.serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
-    return new Response(
-      JSON.stringify({ error: "Unknown action" }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 400,
-      }
-    );
+    return new Response(JSON.stringify({ error: "Unknown action" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400,
+    });
   } catch (error) {
     console.error("Stripe connect error:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500,
-      }
-    );
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+    });
   }
 });

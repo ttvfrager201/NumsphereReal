@@ -1,107 +1,113 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// This function handles incoming calls to the Twilio number via TwiML
-// Twilio calls this webhook when someone calls the provisioned number
-// It returns TwiML to forward the call to the user's real number
+// ================================================================
+// TWILIO INCOMING CALL WEBHOOK - HANGUP & SMS
+// ================================================================
 
 const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers":
-        "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
+function twimlResponse(xml: string): Response {
+  return new Response(xml, {
+    headers: { ...corsHeaders, "Content-Type": "text/xml" },
+    status: 200,
+  });
+}
+
 Deno.serve(async (req) => {
-    if (req.method === "OPTIONS") {
-        return new Response("ok", { headers: corsHeaders, status: 200 });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders, status: 200 });
+  }
+
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SERVICE_KEY")!,
+    );
+
+    // Twilio POSTs x-www-form-urlencoded
+    const formData = await req.formData();
+    const callerNumber = formData.get("From") as string;
+    const calledNumber = formData.get("To") as string;
+    const callSid = formData.get("CallSid") as string;
+    const callStatus = formData.get("CallStatus") as string;
+
+    console.log("📞 Incoming call:", {
+      callSid,
+      from: callerNumber,
+      to: calledNumber,
+    });
+
+    if (!calledNumber) {
+      return twimlResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Number not configured. Goodbye.</Say><Hangup/></Response>`,
+      );
     }
 
+    // Look up business config by Twilio number
+    const normalizedCalledNumber = calledNumber.replace(/\s/g, "");
+
+    const { data: config } = await supabase
+      .from("call_forwarding_configs")
+      .select("*")
+      .eq("twilio_number", normalizedCalledNumber)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!config) {
+      return twimlResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Number not configured. Goodbye.</Say><Hangup/></Response>`,
+      );
+    }
+
+    // Log the call
+    const { error: logError } = await supabase.from("call_logs").insert({
+      user_id: config.user_id,
+      twilio_call_sid: callSid,
+      caller_number: callerNumber,
+      called_number: calledNumber,
+      call_status: callStatus || "ringing",
+      raw_payload: Object.fromEntries(formData.entries()),
+    });
+
+    if (logError) console.error("Failed to log call:", logError);
+
+    // Trigger missed-call SMS
     try {
-        const supabase = createClient(
-            Deno.env.get("SUPABASE_URL")!,
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+      const SERVICE_KEY = Deno.env.get("SERVICE_KEY")!;
 
-        // Parse the form data from Twilio
-        const formData = await req.formData();
-        const callerNumber = formData.get("From") as string;
-        const calledNumber = formData.get("To") as string;
-        const callStatus = formData.get("CallStatus") as string;
+      await fetch(`${SUPABASE_URL}/functions/v1/send-missed-call-sms`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+        },
+        body: JSON.stringify({
+          missed_call_id: callSid, // use callSid to track
+          user_id: config.user_id,
+          caller_number: callerNumber,
+        }),
+      });
+    } catch (smsError) {
+      console.error("Failed to send SMS:", smsError);
+    }
 
-        console.log("Incoming call:", { callerNumber, calledNumber, callStatus });
-
-        if (!calledNumber) {
-            return new Response(
-                `<?xml version="1.0" encoding="UTF-8"?>
+    // End call immediately
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Sorry, this number is not configured. Goodbye.</Say>
-</Response>`,
-                {
-                    headers: { ...corsHeaders, "Content-Type": "text/xml" },
-                    status: 200,
-                }
-            );
-        }
-
-        // Normalize the called number to look up in our DB
-        const normalizedCalledNumber = calledNumber.replace(/\s/g, "");
-
-        // Find the user who owns this Twilio number
-        const { data: config } = await supabase
-            .from("call_forwarding_configs")
-            .select("*")
-            .eq("twilio_number", normalizedCalledNumber)
-            .eq("is_active", true)
-            .maybeSingle();
-
-        if (!config) {
-            return new Response(
-                `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Sorry, this number is not configured. Goodbye.</Say>
-</Response>`,
-                {
-                    headers: { ...corsHeaders, "Content-Type": "text/xml" },
-                    status: 200,
-                }
-            );
-        }
-
-        // Log the missed call in our database
-        if (callerNumber) {
-            await supabase.from("missed_calls").insert({
-                user_id: config.user_id,
-                caller_name: null,
-                phone_number: callerNumber,
-                called_at: new Date().toISOString(),
-                status: "new",
-            });
-        }
-
-        // Return TwiML to forward the call
-        const forwardTo = config.forward_to_number;
-
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Dial timeout="20" action="" method="POST">
-    <Number>${forwardTo}</Number>
-  </Dial>
+  <Hangup/>
 </Response>`;
 
-        return new Response(twiml, {
-            headers: { ...corsHeaders, "Content-Type": "text/xml" },
-            status: 200,
-        });
-    } catch (error) {
-        console.error("twilio-call-webhook error:", error);
-        return new Response(
-            `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Sorry, an error occurred. Please try again later.</Say>
-</Response>`,
-            {
-                headers: { ...corsHeaders, "Content-Type": "text/xml" },
-                status: 200,
-            }
-        );
-    }
+    return twimlResponse(twiml);
+  } catch (error) {
+    console.error("twilio-call-webhook error:", error);
+    return twimlResponse(
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, an error occurred. Goodbye.</Say><Hangup/></Response>`,
+    );
+  }
 });

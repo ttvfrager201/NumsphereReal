@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Phone, Clock, MessageSquare, Check, X, CalendarCheck } from "lucide-react";
+import { Phone, Clock, MessageSquare, Check, X, CalendarCheck, Zap } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -109,7 +109,11 @@ export function MissedCallFeed({ calls, onSendLink, onMarkHandled }: MissedCallF
                     
                     {call.status === "texted" && (
                       <span className="text-xs font-medium px-3 py-1 bg-teal-500/20 text-teal-400 rounded-full flex items-center gap-1 border border-teal-500/30">
-                        <Check className="w-3 h-3" /> Link Sent
+                        {(call as any).auto_texted ? (
+                          <><Zap className="w-3 h-3" /> Auto-Sent</>
+                        ) : (
+                          <><Check className="w-3 h-3" /> Link Sent</>
+                        )}
                       </span>
                     )}
                     

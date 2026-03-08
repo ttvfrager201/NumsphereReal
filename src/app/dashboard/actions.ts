@@ -16,7 +16,9 @@ export async function markCallHandled(id: string) {
 
 export async function sendBookingLink(id: string) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -24,15 +26,18 @@ export async function sendBookingLink(id: string) {
 
   // Call the edge function to send real Twilio SMS
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-missed-call-sms`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        "apikey": SUPABASE_ANON_KEY,
+    const res = await fetch(
+      `${SUPABASE_URL}/functions/v1/send-missed-call-sms`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ missed_call_id: id, user_id: user.id }),
       },
-      body: JSON.stringify({ missed_call_id: id, user_id: user.id }),
-    });
+    );
 
     const result = await res.json();
 
@@ -61,7 +66,9 @@ export async function sendBookingLink(id: string) {
 
 export async function getCallForwardingConfig() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { data, error } = await supabase
@@ -80,22 +87,85 @@ export async function saveCallForwardingConfig(config: {
   booking_slug?: string | null;
   twilio_number?: string | null;
   twilio_number_sid?: string | null;
+  auto_text_enabled?: boolean;
 }) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase.from("call_forwarding_configs").upsert(
+    {
+      user_id: user.id,
+      ...config,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard");
+}
+
+export async function provisionTwilioNumber(areaCode?: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data, error } = await supabase.functions.invoke(
+    "supabase-functions-provision-twilio-number",
+    {
+      body: {
+        user_id: user.id,
+        area_code: areaCode || undefined,
+      },
+    },
+  );
+
+  if (error) {
+    throw new Error(error.message || "Failed to provision phone number");
+  }
+
+  // ✅ Use the data returned by the edge function directly
+  revalidatePath("/dashboard");
+  return data;
+}
+
+export async function getUserBookingLinks() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data, error } = await supabase
+    .from("business_profiles")
+    .select("id, business_name, booking_slug")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function toggleAutoTextBack(enabled: boolean) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { error } = await supabase
     .from("call_forwarding_configs")
-    .upsert(
-      {
-        user_id: user.id,
-        ...config,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
-    );
+    .update({
+      auto_text_enabled: enabled,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", user.id);
 
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard");
@@ -103,7 +173,9 @@ export async function saveCallForwardingConfig(config: {
 
 export async function updateSettings(settings: any) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -112,7 +184,7 @@ export async function updateSettings(settings: any) {
     .upsert({
       user_id: user.id,
       ...settings,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     })
     .eq("user_id", user.id);
 
@@ -136,7 +208,9 @@ export async function saveBusinessProfile(profile: {
   slot_duration?: number;
 }) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -172,25 +246,23 @@ export async function saveBusinessProfile(profile: {
       .maybeSingle();
 
     // Insert new profile
-    const { error } = await supabase
-      .from("business_profiles")
-      .insert({
-        user_id: user.id,
-        business_name: profile.business_name,
-        address: profile.address,
-        phone_number: profile.phone_number,
-        email: profile.email,
-        logo_url: profile.logo_url,
-        booking_slug: profile.booking_slug,
-        theme_color: profile.theme_color,
-        accent_color: profile.accent_color,
-        dark_mode: profile.dark_mode,
-        payments_enabled: profile.payments_enabled,
-        available_hours: profile.available_hours,
-        slot_duration: profile.slot_duration,
-        // Inherit the user's existing Stripe account if they have one
-        stripe_account_id: userData?.stripe_account_id || null,
-      });
+    const { error } = await supabase.from("business_profiles").insert({
+      user_id: user.id,
+      business_name: profile.business_name,
+      address: profile.address,
+      phone_number: profile.phone_number,
+      email: profile.email,
+      logo_url: profile.logo_url,
+      booking_slug: profile.booking_slug,
+      theme_color: profile.theme_color,
+      accent_color: profile.accent_color,
+      dark_mode: profile.dark_mode,
+      payments_enabled: profile.payments_enabled,
+      available_hours: profile.available_hours,
+      slot_duration: profile.slot_duration,
+      // Inherit the user's existing Stripe account if they have one
+      stripe_account_id: userData?.stripe_account_id || null,
+    });
 
     if (error) throw new Error(error.message);
   }
@@ -200,7 +272,9 @@ export async function saveBusinessProfile(profile: {
 
 export async function uploadBusinessLogo(formData: FormData): Promise<string> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -216,16 +290,18 @@ export async function uploadBusinessLogo(formData: FormData): Promise<string> {
 
   if (uploadError) throw new Error(uploadError.message);
 
-  const { data: { publicUrl } } = supabase.storage
-    .from("business-logos")
-    .getPublicUrl(filePath);
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from("business-logos").getPublicUrl(filePath);
 
   return publicUrl;
 }
 
 export async function checkSlugAvailability(slug: string): Promise<boolean> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -243,7 +319,9 @@ export async function checkSlugAvailability(slug: string): Promise<boolean> {
 
 export async function getBusinessProfile() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -259,7 +337,9 @@ export async function getBusinessProfile() {
 
 export async function getAllBusinessProfiles() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -275,7 +355,9 @@ export async function getAllBusinessProfiles() {
 
 export async function deleteBusinessProfileById(id: string) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -318,23 +400,29 @@ export async function deleteBusinessProfileById(id: string) {
 
 export async function createMockCall() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
-  const names = ["Alice Johnson", "Bob Smith", "Charlie Brown", "Diana Prince", "Evan Wright"];
+  const names = [
+    "Alice Johnson",
+    "Bob Smith",
+    "Charlie Brown",
+    "Diana Prince",
+    "Evan Wright",
+  ];
   const randomName = names[Math.floor(Math.random() * names.length)];
   const randomPhone = `+1 (555) ${Math.floor(Math.random() * 900) + 100}-${Math.floor(Math.random() * 9000) + 1000}`;
 
-  const { error } = await supabase
-    .from("missed_calls")
-    .insert({
-      user_id: user.id,
-      caller_name: randomName,
-      phone_number: randomPhone,
-      called_at: new Date().toISOString(),
-      status: 'new'
-    });
+  const { error } = await supabase.from("missed_calls").insert({
+    user_id: user.id,
+    caller_name: randomName,
+    phone_number: randomPhone,
+    called_at: new Date().toISOString(),
+    status: "new",
+  });
 
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard");
@@ -342,7 +430,9 @@ export async function createMockCall() {
 
 export async function deleteBusinessProfile() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Unauthorized");
 
@@ -358,7 +448,9 @@ export async function deleteBusinessProfile() {
 // Services CRUD
 export async function getServicesForProfile(businessProfileId: string) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { data, error } = await supabase
@@ -390,7 +482,8 @@ export async function saveService(service: {
     } = await supabase.auth.getUser();
     if (!user) throw new Error("Unauthorized");
 
-    const paymentMode = service.payment_mode ?? (service.is_paid ? "online" : "free");
+    const paymentMode =
+      service.payment_mode ?? (service.is_paid ? "online" : "free");
 
     const serviceData = {
       name: service.name,
@@ -429,7 +522,9 @@ export async function saveService(service: {
 
 export async function deleteService(id: string) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { error } = await supabase
@@ -442,9 +537,15 @@ export async function deleteService(id: string) {
   revalidatePath("/dashboard");
 }
 
-export async function updateBusinessProfileStripe(profileId: string, stripeAccountId: string, paymentsEnabled: boolean) {
+export async function updateBusinessProfileStripe(
+  profileId: string,
+  stripeAccountId: string,
+  paymentsEnabled: boolean,
+) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { error } = await supabase
@@ -468,9 +569,15 @@ export async function updateBusinessProfileStripe(profileId: string, stripeAccou
   revalidatePath("/dashboard");
 }
 
-export async function updateAvailableHours(profileId: string, availableHours: any, slotDuration: number) {
+export async function updateAvailableHours(
+  profileId: string,
+  availableHours: any,
+  slotDuration: number,
+) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   const { error } = await supabase
@@ -489,7 +596,9 @@ export async function updateAvailableHours(profileId: string, availableHours: an
 
 export async function syncStripeAcrossProfiles() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
   // First check user-level Stripe account (survives all booking link deletions)
@@ -533,7 +642,9 @@ export async function syncStripeAcrossProfiles() {
 
 export async function getUserStripeAccountId(): Promise<string | null> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
 
   // First try user-level storage (persists even if all booking links are deleted)

@@ -18,15 +18,21 @@ import {
     CheckCircle2,
     Sparkles,
     PhoneForwarded,
-    Hash,
     Signal,
     Edit3,
     Info,
     Link2,
+    ExternalLink,
+    Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "../../../supabase/client";
 import { cn } from "@/lib/utils";
+import {
+    toggleAutoTextBack,
+    provisionTwilioNumber,
+    getUserBookingLinks,
+} from "@/app/dashboard/actions";
 
 const SITE_URL =
     process.env.NEXT_PUBLIC_SITE_URL ||
@@ -41,11 +47,18 @@ interface CallForwardingConfig {
     sms_message_template?: string | null;
     booking_slug?: string | null;
     is_active?: boolean;
+    auto_text_enabled?: boolean;
 }
 
-type Step = "start" | "forward_number" | "sms_message" | "complete";
+interface BookingLink {
+    id: string;
+    business_name: string;
+    booking_slug: string;
+}
 
-const STEPS: Step[] = ["start", "forward_number", "sms_message", "complete"];
+type Step = "start" | "forward_number" | "sms_message" | "provisioning" | "complete";
+
+const STEPS: Step[] = ["start", "forward_number", "sms_message", "provisioning", "complete"];
 
 export function MissedCallSetup() {
     const [step, setStep] = useState<Step>("start");
@@ -53,6 +66,13 @@ export function MissedCallSetup() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [copied, setCopied] = useState<string | null>(null);
+    const [autoTextEnabled, setAutoTextEnabled] = useState(false);
+    const [bookingLinks, setBookingLinks] = useState<BookingLink[]>([]);
+    const [selectedSlug, setSelectedSlug] = useState<string>("");
+    const [provisioningStatus, setProvisioningStatus] = useState<
+        "idle" | "searching" | "purchasing" | "configuring" | "done" | "error"
+    >("idle");
+    const [provisionError, setProvisionError] = useState<string>("");
 
     // Form fields
     const [forwardNumber, setForwardNumber] = useState("");
@@ -60,7 +80,6 @@ export function MissedCallSetup() {
         "Hey! Sorry I missed your call. Here's my booking link so you can grab a time that works: [LINK]"
     );
     const [bookingSlug, setBookingSlug] = useState("");
-    const [twilioNumber, setTwilioNumber] = useState("");
 
     const supabase = createClient();
 
@@ -75,12 +94,19 @@ export function MissedCallSetup() {
             } = await supabase.auth.getUser();
             if (!user) return;
 
-            const { data: existingConfig } = await supabase
-                .from("call_forwarding_configs")
-                .select("*")
-                .eq("user_id", user.id)
-                .maybeSingle();
+            // Load config and booking links in parallel
+            const [configResult, links] = await Promise.all([
+                supabase
+                    .from("call_forwarding_configs")
+                    .select("*")
+                    .eq("user_id", user.id)
+                    .maybeSingle(),
+                getUserBookingLinks(),
+            ]);
 
+            setBookingLinks(links);
+
+            const existingConfig = configResult.data;
             if (existingConfig) {
                 setConfig(existingConfig);
                 setForwardNumber(existingConfig.forward_to_number || "");
@@ -89,7 +115,15 @@ export function MissedCallSetup() {
                     "Hey! Sorry I missed your call. Here's my booking link so you can grab a time that works: [LINK]"
                 );
                 setBookingSlug(existingConfig.booking_slug || "");
-                setTwilioNumber(existingConfig.twilio_number || "");
+                setAutoTextEnabled(existingConfig.auto_text_enabled || false);
+
+                // If user already has a slug selected, pre-select it
+                if (existingConfig.booking_slug) {
+                    setSelectedSlug(existingConfig.booking_slug);
+                } else if (links.length > 0) {
+                    setSelectedSlug(links[0].booking_slug);
+                }
+
                 if (existingConfig.twilio_number) {
                     setStep("complete");
                 } else if (existingConfig.forward_to_number) {
@@ -149,11 +183,14 @@ export function MissedCallSetup() {
                 await saveConfig({ forward_to_number: forwardNumber });
                 setStep("sms_message");
             } else if (step === "sms_message") {
+                const slugToUse = selectedSlug || bookingSlug || null;
                 await saveConfig({
                     sms_message_template: smsMessage,
-                    booking_slug: bookingSlug || null,
+                    booking_slug: slugToUse,
                 });
-                setStep("complete");
+                // Move to provisioning step — auto-buy a number
+                setStep("provisioning");
+                await handleProvisionNumber();
             }
         } catch (err: any) {
             toast.error(err.message || "Failed to save");
@@ -162,24 +199,46 @@ export function MissedCallSetup() {
         }
     };
 
-    const handleBack = () => {
-        const idx = STEPS.indexOf(step);
-        if (idx > 0) setStep(STEPS[idx - 1]);
+    const handleProvisionNumber = async () => {
+        setProvisioningStatus("searching");
+        setProvisionError("");
+
+        try {
+            await new Promise((r) => setTimeout(r, 800));
+            setProvisioningStatus("purchasing");
+
+            const result = await provisionTwilioNumber();
+
+            await new Promise((r) => setTimeout(r, 600));
+            setProvisioningStatus("configuring");
+
+            await new Promise((r) => setTimeout(r, 500));
+
+            setConfig((prev) => ({
+                ...prev,
+                twilio_number: result.twilio_number,
+                twilio_number_sid: result.twilio_number_sid,
+            }));
+
+            setProvisioningStatus("done");
+
+            await new Promise((r) => setTimeout(r, 1200));
+            setStep("complete");
+        } catch (err: any) {
+            console.error("Provision error:", err);
+            setProvisionError(err.message || "Failed to get a phone number");
+            setProvisioningStatus("error");
+        }
     };
 
-    const handleSaveTwilio = async () => {
-        if (!twilioNumber.trim()) {
-            toast.error("Please enter your Twilio number");
-            return;
-        }
-        setSaving(true);
-        try {
-            await saveConfig({ twilio_number: twilioNumber });
-            toast.success("Twilio number saved!");
-        } catch (err: any) {
-            toast.error(err.message || "Failed to save Twilio number");
-        } finally {
-            setSaving(false);
+    const handleBack = () => {
+        const idx = STEPS.indexOf(step);
+        if (idx > 0) {
+            if (STEPS[idx - 1] === "provisioning") {
+                setStep("sms_message");
+            } else {
+                setStep(STEPS[idx - 1]);
+            }
         }
     };
 
@@ -191,7 +250,9 @@ export function MissedCallSetup() {
             "Hey! Sorry I missed your call. Here's my booking link so you can grab a time that works: [LINK]"
         );
         setBookingSlug("");
-        setTwilioNumber("");
+        setSelectedSlug("");
+        setProvisioningStatus("idle");
+        setProvisionError("");
     };
 
     const copyToClipboard = (text: string, key: string) => {
@@ -201,10 +262,9 @@ export function MissedCallSetup() {
         setTimeout(() => setCopied(null), 2000);
     };
 
-    // Build SMS preview replacing [LINK] with actual URL or slug
     const smsPreview = (() => {
         let preview = smsMessage;
-        const slug = bookingSlug || config.booking_slug;
+        const slug = selectedSlug || bookingSlug || config.booking_slug;
         if (slug) {
             const url = `${SITE_URL}/book/${slug}`;
             preview = preview.replace(/\[LINK\]/g, url);
@@ -216,14 +276,16 @@ export function MissedCallSetup() {
         return preview;
     })();
 
-    const activeTwilio = config.twilio_number || twilioNumber;
+    const activeTwilio = config.twilio_number;
     const forwardCode = activeTwilio
         ? `*72${activeTwilio.replace(/\D/g, "")}`
-        : "*72[twilio-number]";
+        : "*72[number]";
 
-    // Step index for progress bar (forward_number=0, sms_message=1, complete=2)
     const progressSteps = ["forward_number", "sms_message", "complete"] as const;
-    const currentProgressIdx = progressSteps.indexOf(step as any);
+    const currentProgressIdx =
+        step === "provisioning"
+            ? 2
+            : progressSteps.indexOf(step as any);
 
     if (loading) {
         return (
@@ -300,7 +362,6 @@ export function MissedCallSetup() {
                     {/* ─── START ─────────────────────────────────────── */}
                     {step === "start" && (
                         <div className="flex flex-col items-center text-center max-w-xl mx-auto py-10">
-                            {/* Icon */}
                             <div className="relative mb-8">
                                 <div className="w-24 h-24 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-600/10 border border-amber-500/20 flex items-center justify-center">
                                     <PhoneCall className="w-10 h-10 text-amber-400" />
@@ -314,27 +375,26 @@ export function MissedCallSetup() {
                                 Missed Call Text-Back
                             </h2>
                             <p className="text-gray-400 leading-relaxed mb-10 max-w-md">
-                                Never lose a customer from a missed call again. Set up automatic SMS
-                                replies that include your booking link — turning missed calls into
-                                confirmed appointments.
+                                Never lose a customer from a missed call again. We'll get you a
+                                dedicated phone number and set up automatic SMS replies with your
+                                booking link — turning missed calls into confirmed appointments.
                             </p>
 
-                            {/* How it works */}
                             <div className="w-full grid grid-cols-3 gap-4 mb-10">
                                 {[
                                     {
                                         icon: PhoneForwarded,
                                         color: "text-amber-400",
                                         bg: "bg-amber-500/10 border-amber-500/20",
-                                        title: "Forward Calls",
-                                        desc: "Your Twilio number rings your real phone",
+                                        title: "Get a Number",
+                                        desc: "We buy you a dedicated phone number instantly",
                                     },
                                     {
                                         icon: MessageSquare,
                                         color: "text-teal-400",
                                         bg: "bg-teal-500/10 border-teal-500/20",
                                         title: "Auto Text-Back",
-                                        desc: "Miss it? Customer gets your booking link instantly",
+                                        desc: "Miss a call? Customer gets your booking link instantly",
                                     },
                                     {
                                         icon: CheckCircle2,
@@ -405,8 +465,8 @@ export function MissedCallSetup() {
                                 <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex gap-3">
                                     <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                                     <p className="text-xs text-amber-300/80 leading-relaxed">
-                                        You'll get a Twilio number in the final step. Share that number with customers —
-                                        it forwards to this number and auto-texts anyone you miss.
+                                        We'll get you a dedicated phone number in the next step.
+                                        Forward your calls to it and anyone you miss gets texted automatically.
                                     </p>
                                 </div>
                             </div>
@@ -438,7 +498,7 @@ export function MissedCallSetup() {
                         </div>
                     )}
 
-                    {/* ─── STEP 2: SMS Message ───────────────────────── */}
+                    {/* ─── STEP 2: SMS Message + Booking Link ──────────── */}
                     {step === "sms_message" && (
                         <div className="max-w-lg mx-auto">
                             <div className="flex items-center gap-3 mb-8">
@@ -477,35 +537,126 @@ export function MissedCallSetup() {
                                     </p>
                                 </div>
 
-                                {/* Booking Slug */}
+                                {/* Booking Link Selection */}
                                 <div>
                                     <label className="text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
                                         <Link2 className="w-3.5 h-3.5 text-gray-400" />
-                                        Booking Link Slug{" "}
+                                        Booking Link
                                         <span className="text-gray-500 font-normal text-xs">(optional)</span>
                                     </label>
-                                    <div className="flex items-center gap-2">
-                                        <div className="h-11 px-3 rounded-xl bg-white/5 border border-white/10 text-gray-500 font-mono text-sm flex items-center shrink-0">
-                                            /book/
+
+                                    {bookingLinks.length > 0 ? (
+                                        <div className="space-y-3">
+                                            <div className="space-y-2">
+                                                {bookingLinks.map((link) => (
+                                                    <button
+                                                        key={link.id}
+                                                        onClick={() => {
+                                                            setSelectedSlug(link.booking_slug);
+                                                            setBookingSlug(link.booking_slug);
+                                                        }}
+                                                        className={cn(
+                                                            "w-full rounded-xl border p-3.5 flex items-center gap-3 text-left transition-all",
+                                                            selectedSlug === link.booking_slug
+                                                                ? "border-teal-500/40 bg-teal-500/10"
+                                                                : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.07]"
+                                                        )}
+                                                    >
+                                                        <div
+                                                            className={cn(
+                                                                "w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all",
+                                                                selectedSlug === link.booking_slug
+                                                                    ? "border-teal-500 bg-teal-500"
+                                                                    : "border-white/20"
+                                                            )}
+                                                        >
+                                                            {selectedSlug === link.booking_slug && (
+                                                                <Check className="w-3 h-3 text-white" />
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-white text-sm font-medium truncate">
+                                                                {link.business_name}
+                                                            </p>
+                                                            <p className="text-gray-500 text-xs font-mono truncate">
+                                                                {SITE_URL}/book/{link.booking_slug}
+                                                            </p>
+                                                        </div>
+                                                        <a
+                                                            href={`${SITE_URL}/book/${link.booking_slug}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            className="text-gray-500 hover:text-white p-1 transition-colors"
+                                                        >
+                                                            <ExternalLink className="w-3.5 h-3.5" />
+                                                        </a>
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <button
+                                                onClick={() => {
+                                                    const event = new CustomEvent("navigate-tab", { detail: "booking-link" });
+                                                    window.dispatchEvent(event);
+                                                }}
+                                                className="flex items-center gap-2 text-xs text-gray-500 hover:text-teal-400 transition-colors mt-2 pl-1"
+                                            >
+                                                <Plus className="w-3 h-3" />
+                                                Create another booking link
+                                            </button>
                                         </div>
-                                        <Input
-                                            placeholder="your-booking-slug"
-                                            value={bookingSlug}
-                                            onChange={(e) =>
-                                                setBookingSlug(
-                                                    e.target.value.toLowerCase().replace(/\s+/g, "-")
-                                                )
-                                            }
-                                            className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-white/30 focus:ring-0 rounded-xl font-mono"
-                                        />
-                                    </div>
-                                    <p className="text-xs text-gray-500 mt-2">
-                                        This is the slug from your booking link page — the{" "}
-                                        <code className="bg-white/10 px-1.5 py-0.5 rounded text-gray-300 font-mono">
-                                            [LINK]
-                                        </code>{" "}
-                                        token will become the full URL.
-                                    </p>
+                                    ) : (
+                                        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
+                                            <div className="flex items-start gap-3">
+                                                <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                                                    <Link2 className="w-4 h-4 text-amber-400" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <p className="text-amber-300 text-sm font-semibold mb-1">
+                                                        No booking link yet
+                                                    </p>
+                                                    <p className="text-amber-300/60 text-xs leading-relaxed mb-3">
+                                                        Create a booking link first so your missed callers can book directly from the SMS.
+                                                        You can also set this up later.
+                                                    </p>
+                                                    <Button
+                                                        onClick={() => {
+                                                            const event = new CustomEvent("navigate-tab", { detail: "booking-link" });
+                                                            window.dispatchEvent(event);
+                                                        }}
+                                                        className="h-9 px-4 rounded-lg bg-amber-500 text-black font-semibold hover:bg-amber-400 text-xs gap-1.5"
+                                                    >
+                                                        <Plus className="w-3 h-3" />
+                                                        Create Booking Link
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {bookingLinks.length > 0 && (
+                                        <details className="mt-3">
+                                            <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400 transition-colors">
+                                                Or enter a custom slug manually
+                                            </summary>
+                                            <div className="flex items-center gap-2 mt-2">
+                                                <div className="h-11 px-3 rounded-xl bg-white/5 border border-white/10 text-gray-500 font-mono text-sm flex items-center shrink-0">
+                                                    /book/
+                                                </div>
+                                                <Input
+                                                    placeholder="your-booking-slug"
+                                                    value={bookingSlug}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value.toLowerCase().replace(/\s+/g, "-");
+                                                        setBookingSlug(val);
+                                                        setSelectedSlug(val);
+                                                    }}
+                                                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-white/30 focus:ring-0 rounded-xl font-mono"
+                                                />
+                                            </div>
+                                        </details>
+                                    )}
                                 </div>
 
                                 {/* SMS Preview */}
@@ -553,24 +704,212 @@ export function MissedCallSetup() {
                         </div>
                     )}
 
+                    {/* ─── PROVISIONING STEP ──────────────────────────── */}
+                    {step === "provisioning" && (
+                        <div className="max-w-md mx-auto py-10">
+                            <div className="flex flex-col items-center text-center">
+                                <div className="relative mb-8">
+                                    <div
+                                        className={cn(
+                                            "w-20 h-20 rounded-full flex items-center justify-center transition-all duration-500",
+                                            provisioningStatus === "error"
+                                                ? "bg-red-500/15 border border-red-500/30"
+                                                : provisioningStatus === "done"
+                                                    ? "bg-green-500/15 border border-green-500/30"
+                                                    : "bg-amber-500/15 border border-amber-500/30"
+                                        )}
+                                    >
+                                        {provisioningStatus === "done" ? (
+                                            <CheckCircle2 className="w-9 h-9 text-green-400" />
+                                        ) : provisioningStatus === "error" ? (
+                                            <Phone className="w-9 h-9 text-red-400" />
+                                        ) : (
+                                            <motion.div
+                                                animate={{ rotate: 360 }}
+                                                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                                            >
+                                                <Signal className="w-9 h-9 text-amber-400" />
+                                            </motion.div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <h2 className="text-xl font-bold text-white mb-2">
+                                    {provisioningStatus === "searching" && "Finding a number..."}
+                                    {provisioningStatus === "purchasing" && "Purchasing your number..."}
+                                    {provisioningStatus === "configuring" && "Configuring webhooks..."}
+                                    {provisioningStatus === "done" && "Number ready!"}
+                                    {provisioningStatus === "error" && "Something went wrong"}
+                                    {provisioningStatus === "idle" && "Setting up..."}
+                                </h2>
+
+                                <p className="text-gray-400 text-sm mb-6">
+                                    {provisioningStatus === "searching" &&
+                                        "Searching for available phone numbers in your area..."}
+                                    {provisioningStatus === "purchasing" &&
+                                        "Securing your dedicated phone number..."}
+                                    {provisioningStatus === "configuring" &&
+                                        "Setting up call forwarding and SMS automation..."}
+                                    {provisioningStatus === "done" &&
+                                        "Your number is ready to go! Redirecting..."}
+                                    {provisioningStatus === "error" && provisionError}
+                                    {provisioningStatus === "idle" && "Please wait..."}
+                                </p>
+
+                                {provisioningStatus !== "error" && provisioningStatus !== "done" && (
+                                    <div className="flex items-center gap-2">
+                                        {["searching", "purchasing", "configuring"].map((s, i) => {
+                                            const statusOrder = ["searching", "purchasing", "configuring"];
+                                            const currentIdx = statusOrder.indexOf(provisioningStatus);
+                                            const isActive = i <= currentIdx;
+                                            return (
+                                                <div
+                                                    key={s}
+                                                    className={cn(
+                                                        "w-2 h-2 rounded-full transition-all duration-500",
+                                                        isActive ? "bg-amber-400 scale-110" : "bg-white/10"
+                                                    )}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {provisioningStatus === "error" && (
+                                    <div className="mt-4 flex gap-3">
+                                        <Button
+                                            onClick={() => {
+                                                setStep("sms_message");
+                                                setProvisioningStatus("idle");
+                                            }}
+                                            variant="ghost"
+                                            className="text-gray-400 hover:text-white gap-2"
+                                        >
+                                            <ArrowLeft className="w-4 h-4" />
+                                            Go Back
+                                        </Button>
+                                        <Button
+                                            onClick={handleProvisionNumber}
+                                            className="h-11 px-6 rounded-full bg-white text-black font-semibold hover:bg-gray-100 transition-all gap-2"
+                                        >
+                                            Try Again
+                                            <ArrowRight className="w-4 h-4" />
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* ─── STEP 3: Complete ──────────────────────────── */}
                     {step === "complete" && (
                         <div className="max-w-lg mx-auto">
-                            {/* Success header */}
                             <div className="flex flex-col items-center text-center mb-8">
                                 <div className="w-16 h-16 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center mb-4">
                                     <CheckCircle2 className="w-8 h-8 text-green-400" />
                                 </div>
                                 <h2 className="text-xl font-bold text-white mb-1">
-                                    Setup Complete!
+                                    You're All Set!
                                 </h2>
                                 <p className="text-gray-400 text-sm">
-                                    Enter your Twilio number below and activate call forwarding.
+                                    Forward your calls to the number below and missed callers get texted automatically.
                                 </p>
                             </div>
 
+                            {/* Your Numsphere Number + Forward Code */}
+                            <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/8 via-orange-500/5 to-transparent p-6 mb-5">
+                                <div className="flex items-center gap-2 mb-5">
+                                    <Signal className="w-4 h-4 text-amber-400" />
+                                    <p className="text-amber-300 text-sm font-semibold uppercase tracking-wider">
+                                        Your Numsphere Number
+                                    </p>
+                                </div>
+
+                                {config.twilio_number ? (
+                                    <div className="flex items-center gap-3 mb-5">
+                                        <div className="flex-1 h-14 bg-black/40 rounded-xl border border-amber-500/20 flex items-center px-4">
+                                            <span className="text-white font-mono text-xl font-bold tracking-wider">
+                                                {config.twilio_number}
+                                            </span>
+                                        </div>
+                                        <Button
+                                            onClick={() => copyToClipboard(config.twilio_number!, "twilio")}
+                                            variant="ghost"
+                                            className="h-14 px-4 border border-white/10 rounded-xl text-gray-400 hover:text-white hover:bg-white/5"
+                                        >
+                                            {copied === "twilio" ? (
+                                                <Check className="w-4 h-4 text-green-400" />
+                                            ) : (
+                                                <Copy className="w-4 h-4" />
+                                            )}
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="mb-5 h-14 bg-black/40 rounded-xl border border-amber-500/20 flex items-center justify-center">
+                                        <Loader2 className="w-5 h-5 text-gray-500 animate-spin" />
+                                    </div>
+                                )}
+
+                                <div className="border-t border-amber-500/15 pt-5">
+                                    <p className="text-amber-300/80 text-xs font-semibold uppercase tracking-wider mb-4">
+                                        Activate Call Forwarding
+                                    </p>
+                                    <div className="space-y-3">
+                                        {[
+                                            {
+                                                n: "1",
+                                                text: "Open your phone's dialer app",
+                                                code: null,
+                                            },
+                                            {
+                                                n: "2",
+                                                text: "Dial this forwarding code and press Call:",
+                                                code: forwardCode,
+                                                codeKey: "code",
+                                            },
+                                            {
+                                                n: "3",
+                                                text: "Wait for a confirmation tone — done!",
+                                                code: null,
+                                            },
+                                            {
+                                                n: "4",
+                                                text: "Give your Numsphere number to customers. Any call you miss will automatically text them your booking link.",
+                                                code: null,
+                                            },
+                                        ].map((item) => (
+                                            <div key={item.n} className="flex gap-3">
+                                                <span className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold text-amber-300 shrink-0 mt-0.5">
+                                                    {item.n}
+                                                </span>
+                                                <div className="flex-1">
+                                                    <span className="text-gray-300 text-sm">{item.text}</span>
+                                                    {item.code && (
+                                                        <div className="mt-2 flex items-center gap-2">
+                                                            <code className="bg-black/50 border border-amber-500/30 text-amber-300 font-mono text-lg font-bold px-4 py-2 rounded-xl">
+                                                                {item.code}
+                                                            </code>
+                                                            <button
+                                                                onClick={() => copyToClipboard(item.code!, item.codeKey!)}
+                                                                className="p-1.5 rounded-lg text-gray-500 hover:text-amber-300 hover:bg-amber-500/10 transition-all"
+                                                            >
+                                                                {copied === item.codeKey ? (
+                                                                    <Check className="w-3.5 h-3.5 text-green-400" />
+                                                                ) : (
+                                                                    <Copy className="w-3.5 h-3.5" />
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Config summary */}
-                            <div className="space-y-2 mb-6">
+                            <div className="space-y-2 mb-5">
                                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex items-center justify-between">
                                     <div className="flex items-center gap-3">
                                         <Phone className="w-4 h-4 text-gray-400 shrink-0" />
@@ -610,128 +949,56 @@ export function MissedCallSetup() {
                                         <Edit3 className="w-3.5 h-3.5" />
                                     </button>
                                 </div>
-                            </div>
 
-                            {/* Twilio Number Box */}
-                            <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/8 via-orange-500/5 to-transparent p-6 mb-5">
-                                <div className="flex items-center gap-2 mb-5">
-                                    <Signal className="w-4 h-4 text-amber-400" />
-                                    <p className="text-amber-300 text-sm font-semibold uppercase tracking-wider">
-                                        Your Twilio Number
-                                    </p>
-                                </div>
-
-                                {config.twilio_number ? (
-                                    /* — already saved — */
-                                    <div className="flex items-center gap-3 mb-5">
-                                        <div className="flex-1 h-14 bg-black/40 rounded-xl border border-amber-500/20 flex items-center px-4">
-                                            <span className="text-white font-mono text-xl font-bold tracking-wider">
-                                                {config.twilio_number}
-                                            </span>
+                                {/* Booking Link Summary */}
+                                {(config.booking_slug || selectedSlug) ? (
+                                    <div className="rounded-xl border border-teal-500/20 bg-teal-500/5 p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                                            <Link2 className="w-4 h-4 text-teal-400 shrink-0" />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">
+                                                    Booking Link
+                                                </p>
+                                                <p className="text-teal-300 text-sm font-mono truncate">
+                                                    {SITE_URL}/book/{config.booking_slug || selectedSlug}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <Button
-                                            onClick={() => copyToClipboard(config.twilio_number!, "twilio")}
-                                            variant="ghost"
-                                            className="h-14 px-4 border border-white/10 rounded-xl text-gray-400 hover:text-white hover:bg-white/5"
+                                        <a
+                                            href={`${SITE_URL}/book/${config.booking_slug || selectedSlug}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-gray-500 hover:text-teal-400 transition-colors p-1.5 rounded-lg hover:bg-teal-500/10 ml-3 shrink-0"
                                         >
-                                            {copied === "twilio" ? (
-                                                <Check className="w-4 h-4 text-green-400" />
-                                            ) : (
-                                                <Copy className="w-4 h-4" />
-                                            )}
-                                        </Button>
+                                            <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
                                     </div>
                                 ) : (
-                                    /* — not yet saved — */
-                                    <div className="mb-5">
-                                        <p className="text-amber-300/70 text-xs mb-3 leading-relaxed">
-                                            Paste your Twilio number here. Get one from{" "}
-                                            <a
-                                                href="https://console.twilio.com/us1/develop/phone-numbers/manage/incoming"
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-amber-300 underline underline-offset-2"
-                                            >
-                                                twilio.com/console
-                                            </a>
-                                            .
-                                        </p>
-                                        <div className="flex items-center gap-2">
-                                            <Input
-                                                type="tel"
-                                                placeholder="+1 (555) 000-0001"
-                                                value={twilioNumber}
-                                                onChange={(e) => setTwilioNumber(e.target.value)}
-                                                className="h-12 bg-black/40 border-amber-500/20 text-white placeholder:text-gray-600 focus:border-amber-500/40 focus:ring-0 rounded-xl font-mono flex-1"
-                                            />
-                                            <Button
-                                                onClick={handleSaveTwilio}
-                                                disabled={saving || !twilioNumber.trim()}
-                                                className="h-12 px-5 rounded-xl bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-all shrink-0 disabled:opacity-50"
-                                            >
-                                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
-                                            </Button>
+                                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <Link2 className="w-4 h-4 text-amber-400 shrink-0" />
+                                            <div>
+                                                <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">
+                                                    Booking Link
+                                                </p>
+                                                <p className="text-amber-300/70 text-sm">
+                                                    Not set up yet
+                                                </p>
+                                            </div>
                                         </div>
+                                        <Button
+                                            onClick={() => {
+                                                const event = new CustomEvent("navigate-tab", { detail: "booking-link" });
+                                                window.dispatchEvent(event);
+                                            }}
+                                            variant="ghost"
+                                            className="text-amber-400 hover:text-amber-300 text-xs gap-1 h-8 px-3"
+                                        >
+                                            <Plus className="w-3 h-3" />
+                                            Create One
+                                        </Button>
                                     </div>
                                 )}
-
-                                {/* Activation instructions */}
-                                <div className="border-t border-amber-500/15 pt-5">
-                                    <p className="text-amber-300/80 text-xs font-semibold uppercase tracking-wider mb-4">
-                                        Activate Call Forwarding
-                                    </p>
-                                    <div className="space-y-3">
-                                        {[
-                                            {
-                                                n: "1",
-                                                text: "Open your phone's dialer app",
-                                                code: null,
-                                            },
-                                            {
-                                                n: "2",
-                                                text: "Dial this forwarding code and press Call:",
-                                                code: forwardCode,
-                                                codeKey: "code",
-                                            },
-                                            {
-                                                n: "3",
-                                                text: "Wait for a confirmation tone — done!",
-                                                code: null,
-                                            },
-                                            {
-                                                n: "4",
-                                                text: "Give your Twilio number to customers. Any call you miss will automatically text them your booking link.",
-                                                code: null,
-                                            },
-                                        ].map((item) => (
-                                            <div key={item.n} className="flex gap-3">
-                                                <span className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold text-amber-300 shrink-0 mt-0.5">
-                                                    {item.n}
-                                                </span>
-                                                <div className="flex-1">
-                                                    <span className="text-gray-300 text-sm">{item.text}</span>
-                                                    {item.code && (
-                                                        <div className="mt-2 flex items-center gap-2">
-                                                            <code className="bg-black/50 border border-amber-500/30 text-amber-300 font-mono text-lg font-bold px-4 py-2 rounded-xl">
-                                                                {item.code}
-                                                            </code>
-                                                            <button
-                                                                onClick={() => copyToClipboard(item.code!, item.codeKey!)}
-                                                                className="p-1.5 rounded-lg text-gray-500 hover:text-amber-300 hover:bg-amber-500/10 transition-all"
-                                                            >
-                                                                {copied === item.codeKey ? (
-                                                                    <Check className="w-3.5 h-3.5 text-green-400" />
-                                                                ) : (
-                                                                    <Copy className="w-3.5 h-3.5" />
-                                                                )}
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
                             </div>
 
                             {/* How SMS works */}
@@ -747,10 +1014,64 @@ export function MissedCallSetup() {
                                             <span className="text-white font-medium">Call Feed</span>.
                                             Click{" "}
                                             <span className="text-white font-medium">"Send Link"</span>{" "}
-                                            to instantly text them your booking page — or enable auto-send so it happens automatically.
+                                            to instantly text them your booking page — or enable auto-send below so it happens automatically.
                                         </p>
                                     </div>
                                 </div>
+                            </div>
+
+                            {/* Auto text-back toggle */}
+                            <div className="rounded-xl border border-teal-500/20 bg-teal-500/5 p-4 mt-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-lg bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+                                            <Zap className="w-4 h-4 text-teal-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">
+                                                Auto Text-Back
+                                            </p>
+                                            <p className="text-[11px] text-gray-400">
+                                                Automatically text missed callers your booking link
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={async () => {
+                                            const newVal = !autoTextEnabled;
+                                            setAutoTextEnabled(newVal);
+                                            try {
+                                                await toggleAutoTextBack(newVal);
+                                                toast.success(
+                                                    newVal
+                                                        ? "Auto text-back enabled!"
+                                                        : "Auto text-back disabled"
+                                                );
+                                            } catch (err: any) {
+                                                setAutoTextEnabled(!newVal);
+                                                toast.error(err.message || "Failed to update");
+                                            }
+                                        }}
+                                        className={cn(
+                                            "relative w-12 h-7 rounded-full transition-all duration-300 shrink-0",
+                                            autoTextEnabled
+                                                ? "bg-teal-500"
+                                                : "bg-white/10 border border-white/10"
+                                        )}
+                                    >
+                                        <div
+                                            className={cn(
+                                                "absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-all duration-300",
+                                                autoTextEnabled ? "left-6" : "left-1"
+                                            )}
+                                        />
+                                    </button>
+                                </div>
+                                {autoTextEnabled && (
+                                    <p className="text-[11px] text-teal-300/70 mt-3 ml-12">
+                                        ✓ When a call is missed, the caller will automatically receive your SMS with the booking link.
+                                    </p>
+                                )}
                             </div>
 
                             <div className="flex justify-end mt-5">

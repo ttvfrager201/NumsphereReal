@@ -165,6 +165,7 @@ export type Database = {
       }
       call_forwarding_configs: {
         Row: {
+          auto_text_enabled: boolean | null
           booking_slug: string | null
           created_at: string
           forward_to_number: string
@@ -177,6 +178,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          auto_text_enabled?: boolean | null
           booking_slug?: string | null
           created_at?: string
           forward_to_number: string
@@ -189,6 +191,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          auto_text_enabled?: boolean | null
           booking_slug?: string | null
           created_at?: string
           forward_to_number?: string
@@ -210,34 +213,106 @@ export type Database = {
           },
         ]
       }
+      call_logs: {
+        Row: {
+          call_duration: number | null
+          call_status: string
+          called_number: string
+          caller_number: string
+          created_at: string
+          forward_to_number: string | null
+          id: string
+          missed_call_id: string | null
+          raw_payload: Json | null
+          twilio_call_sid: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          call_duration?: number | null
+          call_status?: string
+          called_number: string
+          caller_number: string
+          created_at?: string
+          forward_to_number?: string | null
+          id?: string
+          missed_call_id?: string | null
+          raw_payload?: Json | null
+          twilio_call_sid: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          call_duration?: number | null
+          call_status?: string
+          called_number?: string
+          caller_number?: string
+          created_at?: string
+          forward_to_number?: string | null
+          id?: string
+          missed_call_id?: string | null
+          raw_payload?: Json | null
+          twilio_call_sid?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "call_logs_missed_call_id_fkey"
+            columns: ["missed_call_id"]
+            isOneToOne: false
+            referencedRelation: "missed_calls"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "call_logs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       missed_calls: {
         Row: {
+          auto_texted: boolean | null
+          call_direction: string | null
           called_at: string
           caller_name: string | null
           created_at: string
           id: string
           phone_number: string
+          sms_sent_at: string | null
           status: string
+          twilio_call_sid: string | null
           updated_at: string
           user_id: string | null
         }
         Insert: {
+          auto_texted?: boolean | null
+          call_direction?: string | null
           called_at?: string
           caller_name?: string | null
           created_at?: string
           id?: string
           phone_number: string
+          sms_sent_at?: string | null
           status?: string
+          twilio_call_sid?: string | null
           updated_at?: string
           user_id?: string | null
         }
         Update: {
+          auto_texted?: boolean | null
+          call_direction?: string | null
           called_at?: string
           caller_name?: string | null
           created_at?: string
           id?: string
           phone_number?: string
+          sms_sent_at?: string | null
           status?: string
+          twilio_call_sid?: string | null
           updated_at?: string
           user_id?: string | null
         }

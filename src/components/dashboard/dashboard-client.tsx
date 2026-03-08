@@ -156,6 +156,17 @@ export function DashboardClient({
     }
   }, []);
 
+  // Listen for navigate-tab events from child components
+  useEffect(() => {
+    const handleNavigateTab = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const tab = customEvent.detail as NavItem;
+      if (tab) setActiveNav(tab);
+    };
+    window.addEventListener("navigate-tab", handleNavigateTab);
+    return () => window.removeEventListener("navigate-tab", handleNavigateTab);
+  }, []);
+
   useEffect(() => {
     const channel = supabase
       .channel("dashboard-changes")
